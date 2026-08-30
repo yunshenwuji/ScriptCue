@@ -10,7 +10,7 @@ import logging
 import uuid
 
 from fastapi import WebSocket
-from starlette.exceptions import WebSocketDisconnect
+from starlette.websockets import WebSocketDisconnect
 
 from . import protocol as p
 from .audit import AuditLog
