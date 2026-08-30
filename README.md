@@ -63,8 +63,20 @@ docker compose up -d --build
 ```bash
 cd agent
 pip install -r requirements.txt
-python -m agent.cli
+
+# GUI 版（正式使用）
+python -m agent.gui
+
+# 命令行版（联调/验证核心链路）
+python -m agent.cli --server ws://127.0.0.1:8000 --room <房间码> --nickname <昵称>
 ```
+
+打包为免安装单文件（发布用，需先安装 pyinstaller）：
+
+- Windows：在 `agent/` 目录执行 `.\build_windows.ps1`，产物 `dist/ScriptCueAgent.exe`
+- macOS：在 `agent/` 目录执行 `./build_macos.sh`，产物 `dist/ScriptCue.app`
+
+未签名程序的首次打开方法见 [首次打开指引](docs/first-run.md)。
 
 ## 开发约定
 
