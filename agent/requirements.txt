@@ -1,4 +1,5 @@
-websockets>=12,<16
+# 上限 18 与服务端 uvicorn[standard] 的 websockets>=13 兼容，避免共享环境降级冲突
+websockets>=13,<18
 pynput>=1.7; sys_platform == "darwin"
 
 # 打包（仅发布时需要）
