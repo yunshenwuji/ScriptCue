@@ -76,6 +76,18 @@ class AgentEngine:
     def stop(self) -> None:
         self._stopped = True
 
+    def disconnect(self) -> None:
+        """停止引擎并立即断开当前连接（用户主动退出房间时使用）。"""
+        self._stopped = True
+        for cancel in self._pending_fires.values():
+            cancel.set()
+        ws, loop = self._ws, self._loop
+        if ws is not None and loop is not None and not loop.is_closed():
+            try:
+                asyncio.run_coroutine_threadsafe(ws.close(), loop)
+            except RuntimeError:
+                pass
+
     # ------------------------------------------------------------------
     # 连接生命周期
     # ------------------------------------------------------------------

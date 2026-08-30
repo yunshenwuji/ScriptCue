@@ -2,19 +2,96 @@
 <html lang="zh-CN">
 <head>
   <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+  <meta name="theme-color" content="#16213e">
   <title>述播 ScriptCue · 主控端</title>
-  <style>
-    body { font-family: system-ui, "Microsoft YaHei", sans-serif; display: flex; align-items: center; justify-content: center; min-height: 100vh; margin: 0; background: #f5f6f8; color: #333; }
-    .card { background: #fff; border-radius: 12px; padding: 32px 40px; box-shadow: 0 2px 12px rgba(0,0,0,.08); text-align: center; }
-    h1 { margin: 0 0 8px; font-size: 22px; }
-    p { margin: 0; color: #888; font-size: 14px; }
-  </style>
+  <link rel="stylesheet" href="style.css">
 </head>
 <body>
-  <div class="card">
-    <h1>述播 ScriptCue</h1>
-    <p>主控端界面建设中（占位页）</p>
-  </div>
+  <header>
+    <div class="brand">
+      <span class="logo">▶</span>
+      <div>
+        <h1>述播 <small>ScriptCue</small></h1>
+        <p class="subtitle">多设备同步起播 · 主控端</p>
+      </div>
+    </div>
+    <div id="conn-pill" class="pill offline">未连接</div>
+  </header>
+
+  <main>
+    <!-- ============ 首页：创建 / 加入房间 ============ -->
+    <section id="home-view">
+      <div class="card">
+        <h2>创建新房间</h2>
+        <input id="create-name" type="text" placeholder="房间名（如：周六下午场）" maxlength="32">
+        <input id="create-password" type="password" placeholder="房间口令（可选）" maxlength="32">
+        <button id="btn-create" class="primary">创建房间</button>
+      </div>
+
+      <div class="divider">或</div>
+
+      <div class="card">
+        <h2>加入已有房间</h2>
+        <input id="join-code" type="text" placeholder="6 位房间码" maxlength="6"
+               autocapitalize="characters" autocomplete="off" spellcheck="false">
+        <input id="join-password" type="password" placeholder="房间口令（如有）" maxlength="32">
+        <button id="btn-join" class="primary">加入房间</button>
+      </div>
+
+      <p id="home-error" class="error" hidden></p>
+    </section>
+
+    <!-- ============ 房间控制台 ============ -->
+    <section id="room-view" hidden>
+      <div class="room-head">
+        <div>
+          <div id="room-name" class="room-name"></div>
+          <div id="room-code" class="room-code" title="点击复制房间码"></div>
+          <div class="room-code-tip">房间码 · 点击复制</div>
+        </div>
+        <button id="btn-leave" class="ghost">离开</button>
+      </div>
+
+      <div id="countdown-banner" class="banner" hidden>
+        <div id="countdown-text"></div>
+        <button id="btn-cancel-cmd" class="danger">取消指令</button>
+      </div>
+
+      <div id="toast" class="toast" hidden></div>
+
+      <div class="section-title">
+        设备列表 <span id="ready-count" class="ready-count"></span>
+      </div>
+      <div id="agent-list"></div>
+
+      <div class="controls">
+        <button id="btn-play" class="primary big hold-btn">
+          <span class="hold-fill"></span>
+          <span class="hold-label">全体起播（长按 1 秒）</span>
+        </button>
+        <div class="row">
+          <button id="btn-pause">全体暂停</button>
+          <button id="btn-resume">恢复播放</button>
+        </div>
+        <div class="row">
+          <button id="btn-test-all" class="hold-btn">
+            <span class="hold-fill"></span>
+            <span class="hold-label">全体测试（长按）</span>
+          </button>
+          <label class="lead-label">提前量
+            <input id="lead-ms" type="number" value="3000" min="1000" max="30000" step="500"> ms
+          </label>
+        </div>
+      </div>
+
+      <div class="card">
+        <h3 id="receipt-title">最近指令回执</h3>
+        <div id="receipt-list" class="receipts"><p class="muted">尚无指令回执</p></div>
+      </div>
+    </section>
+  </main>
+
+  <script src="app.js"></script>
 </body>
 </html>
