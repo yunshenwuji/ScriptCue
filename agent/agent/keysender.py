@@ -68,7 +68,9 @@ if sys.platform == "win32":
         inputs[0].ki = KEYBDINPUT(wVk=VK_SPACE)
         inputs[1].type = INPUT_KEYBOARD
         inputs[1].ki = KEYBDINPUT(wVk=VK_SPACE, dwFlags=KEYEVENTF_KEYUP)
-        sent = _SendInput(2, ctypes.byref(inputs), ctypes.sizeof(INPUT))
+        # 数组实例可直接作为指针参数传递（ctypes 自动转换），
+        # 不能用 byref()，其产生的是"指向数组的指针"，与 argtypes 检查不匹配
+        sent = _SendInput(2, inputs, ctypes.sizeof(INPUT))
         if sent != 2:
             err = ctypes.get_last_error()
             buf = ctypes.create_unicode_buffer(256)
