@@ -1,0 +1,14 @@
+services:
+  scriptcue-server:
+    build:
+      context: .
+      dockerfile: server/Dockerfile
+    image: scriptcue-server
+    ports:
+      - "8000:8000"
+    volumes:
+      - scriptcue-data:/app/data
+    restart: unless-stopped
+
+volumes:
+  scriptcue-data:

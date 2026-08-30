@@ -1,0 +1,9 @@
+.git
+.gitignore
+**/__pycache__/
+**/*.pyc
+agent/
+docs/
+server/data/
+controller/node_modules/
+*.md
