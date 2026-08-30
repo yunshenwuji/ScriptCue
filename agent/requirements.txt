@@ -1,0 +1,5 @@
+websockets>=12,<16
+pynput>=1.7; sys_platform == "darwin"
+
+# 打包（仅发布时需要）
+# pyinstaller>=6.0
