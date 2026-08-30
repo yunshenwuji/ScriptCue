@@ -19,5 +19,6 @@ server/data/
 # IDE / 系统
 .idea/
 .vscode/
+.qoder/
 .DS_Store
 Thumbs.db
