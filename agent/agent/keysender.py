@@ -26,6 +26,18 @@ if sys.platform == "win32":
     INPUT_KEYBOARD = 1
     KEYEVENTF_KEYUP = 0x0002
     VK_SPACE = 0x20
+    # ULONG_PTR：64 位下为 8 字节
+    ULONG_PTR = ctypes.c_size_t
+
+    class MOUSEINPUT(ctypes.Structure):
+        _fields_ = [
+            ("dx", wintypes.LONG),
+            ("dy", wintypes.LONG),
+            ("mouseData", wintypes.DWORD),
+            ("dwFlags", wintypes.DWORD),
+            ("time", wintypes.DWORD),
+            ("dwExtraInfo", ULONG_PTR),
+        ]
 
     class KEYBDINPUT(ctypes.Structure):
         _fields_ = [
@@ -33,15 +45,22 @@ if sys.platform == "win32":
             ("wScan", wintypes.WORD),
             ("dwFlags", wintypes.DWORD),
             ("time", wintypes.DWORD),
-            ("dwExtraInfo", ctypes.POINTER(ctypes.c_ulong)),
+            ("dwExtraInfo", ULONG_PTR),
         ]
 
+    # 联合体必须包含最大的成员（MOUSEINPUT），否则 sizeof(INPUT)
+    # 与系统要求不符，SendInput 会直接返回 0（ERROR_INVALID_PARAMETER）
     class _INPUT_UNION(ctypes.Union):
-        _fields_ = [("ki", KEYBDINPUT)]
+        _fields_ = [("mi", MOUSEINPUT), ("ki", KEYBDINPUT)]
 
     class INPUT(ctypes.Structure):
         _anonymous_ = ("u",)
         _fields_ = [("type", wintypes.DWORD), ("u", _INPUT_UNION)]
+
+    _user32 = ctypes.WinDLL("user32", use_last_error=True)
+    _SendInput = _user32.SendInput
+    _SendInput.argtypes = [wintypes.UINT, ctypes.POINTER(INPUT), ctypes.c_int]
+    _SendInput.restype = wintypes.UINT
 
     def _send_space() -> None:
         inputs = (INPUT * 2)()
@@ -49,11 +68,16 @@ if sys.platform == "win32":
         inputs[0].ki = KEYBDINPUT(wVk=VK_SPACE)
         inputs[1].type = INPUT_KEYBOARD
         inputs[1].ki = KEYBDINPUT(wVk=VK_SPACE, dwFlags=KEYEVENTF_KEYUP)
-        sent = ctypes.windll.user32.SendInput(2, ctypes.byref(inputs),
-                                              ctypes.sizeof(INPUT))
+        sent = _SendInput(2, ctypes.byref(inputs), ctypes.sizeof(INPUT))
         if sent != 2:
-            raise KeySendError(f"SendInput 失败（仅注入 {sent}/2），"
-                               "请确认本程序未被安全软件拦截")
+            err = ctypes.get_last_error()
+            buf = ctypes.create_unicode_buffer(256)
+            ctypes.windll.kernel32.FormatMessageW(
+                0x1000, None, err, 0, buf, 256, None)  # FORMAT_MESSAGE_FROM_SYSTEM
+            raise KeySendError(
+                f"SendInput 失败（仅注入 {sent}/2，系统错误 {err}: {buf.value.strip()}）。"
+                "请确认：1) 本程序未被安全软件拦截；"
+                "2) 前台窗口（播放器等）不是以管理员身份运行")
 
 
 # ---------------------------------------------------------------------------

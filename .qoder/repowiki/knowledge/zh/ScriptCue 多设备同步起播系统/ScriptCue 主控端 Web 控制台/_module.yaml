@@ -1,0 +1,9 @@
+schema_version: 1
+module_path: controller
+title: ScriptCue 主控端 Web 控制台
+scope:
+    - controller/
+source_files: []
+depends_on: []
+related_to:
+    - path: server
