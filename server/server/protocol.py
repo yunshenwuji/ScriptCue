@@ -4,6 +4,8 @@
 修改协议时必须同时更新文档与两端副本，并递增 PROTO_VERSION。
 """
 
+import os
+
 PROTO_VERSION = 1
 
 # ---- 消息类型 ----
@@ -67,7 +69,8 @@ MAX_AGENTS_PER_ROOM = 20          # 1 大屏 + 最多 19 台口述员
 ROOM_CODE_LENGTH = 6
 ROOM_CODE_ALPHABET = "23456789ABCDEFGHJKMNPQRSTUVWXYZ"  # 去除 0/O/1/I/L
 ROOM_IDLE_TTL_S = 24 * 3600       # 房间空闲 24h 自动销毁
-DEFAULT_LEAD_MS = 3000            # 指令提前量（可配置）
+# 指令提前量默认值（可配置）；在模块导入期读取，保证默认参数绑定正确
+DEFAULT_LEAD_MS = int(os.environ.get("SC_DEFAULT_LEAD_MS", "3000"))
 
 # ---- 心跳 ----
 HEARTBEAT_INTERVAL_S = 5          # 被控端心跳间隔

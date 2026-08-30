@@ -32,8 +32,6 @@ logger = logging.getLogger("scriptcue")
 REPO_ROOT = Path(__file__).resolve().parents[2]
 DATA_DIR = Path(os.environ.get("SC_DATA_DIR", REPO_ROOT / "server" / "data"))
 CONTROLLER_DIR = Path(os.environ.get("SC_CONTROLLER_DIR", REPO_ROOT / "controller"))
-if os.environ.get("SC_DEFAULT_LEAD_MS"):
-    p.DEFAULT_LEAD_MS = int(os.environ["SC_DEFAULT_LEAD_MS"])
 
 manager = RoomManager()
 audit = AuditLog(DATA_DIR / "audit.jsonl")
