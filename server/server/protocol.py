@@ -23,6 +23,7 @@ CMD_CANCELLED = "command.cancelled"
 # 被控端 → 服务器
 AGENT_JOIN = "agent.join"
 AGENT_HEARTBEAT = "agent.heartbeat"
+AGENT_SET_COMP = "agent.set_comp"
 CLOCK_SYNC_REQ = "clock.sync_req"
 CMD_RECEIPT = "command.receipt"
 

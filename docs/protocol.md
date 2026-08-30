@@ -157,12 +157,17 @@
 ```jsonc
 // 被控端 → 服务器，每 5s
 {"type": "agent.heartbeat", "ready": true, "clock_quality": "excellent", "clock_offset_ms": -42.5, "clock_rtt_ms": 23, "compensation_ms": 0, "pending_command": "uuid或省略"}
-// 服务器 → 主控端（状态有实质变化或定期 2s 节流推送）
+// 被控端 → 服务器（本地修改补偿值，R-05）
+{"type": "agent.set_comp", "compensation_ms": 80}
+// 服务器 → 主控端（每次心跳/状态变化实时推送）
 {"type": "agent.updated", "agent": AgentState}
-{"type": "agent.left", "session_id": "agent-1", "reason": "offline|disconnect|kicked"}
+// 服务器 → 主控端（会话被移除时，V1 暂不使用）
+{"type": "agent.left", "session_id": "agent-1", "reason": "removed"}
 ```
 
 就绪状态变化（被控端点击"我已就绪"）同样通过 `agent.heartbeat` 上报；为降低时延，就绪切换时立即补发一次心跳。
+被控端心跳超时（15s）或连接断开时，服务器推送 `agent.updated` 且 `online: false`，主控端据此标红告警；会话本身保留，被控端重连后可凭令牌恢复。
+被控端本地修改补偿值时发送 `agent.set_comp`，服务器更新后回发 `comp.update` 确认，并向主控端广播新状态。
 
 ## 6. 断线与重连
 
