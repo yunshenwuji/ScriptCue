@@ -36,6 +36,12 @@ UI_FONT = ("Microsoft YaHei UI", 10)
 
 CMD_TEXT = {p.CMD_PLAY: "起播", p.CMD_PAUSE: "暂停", p.CMD_TEST: "测试"}
 
+# 服务器线路预设：口述员只需选择线路名，无需感知真实地址（低门槛）
+SERVER_PRESETS = {
+    "线路1（默认）": "https://sb.kadaiad.fun:4680",
+}
+CHOICE_CUSTOM = "自定义"
+
 
 @contextlib.contextmanager
 def _silence_c_stderr():
@@ -75,9 +81,14 @@ def config_path() -> Path:
 
 def load_config() -> dict:
     try:
-        return json.loads(config_path().read_text(encoding="utf-8"))
+        cfg = json.loads(config_path().read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError):
         return {}
+    # 兼容旧版配置：旧版直接存 server 地址，迁移为"自定义"线路
+    if "server_preset" not in cfg and cfg.get("server"):
+        cfg["server_preset"] = CHOICE_CUSTOM
+        cfg["server_custom"] = cfg["server"]
+    return cfg
 
 
 def save_config(cfg: dict) -> None:
@@ -147,12 +158,31 @@ class GuiApp:
         frm_conn = ttk.LabelFrame(root, text="加入房间")
         frm_conn.pack(fill="x", **pad)
 
-        self.var_server = tk.StringVar(value=self.cfg.get("server", ""))
+        preset = self.cfg.get("server_preset", "线路1（默认）")
+        if preset not in SERVER_PRESETS and preset != CHOICE_CUSTOM:
+            preset = "线路1（默认）"
+        self.var_server_choice = tk.StringVar(value=preset)
+        self.var_server = tk.StringVar(value=self.cfg.get("server_custom", ""))
         self.var_room = tk.StringVar(value=self.cfg.get("room", ""))
         self.var_password = tk.StringVar(value="")
         self.var_nickname = tk.StringVar(value=self.cfg.get("nickname", ""))
 
-        self._entry_row(frm_conn, "服务器", self.var_server)
+        # 服务器线路下拉框（预设线路的真实地址不展示给口述员）
+        self._row_server = ttk.Frame(frm_conn)
+        self._row_server.pack(fill="x", padx=8, pady=3)
+        ttk.Label(self._row_server, text="服务器", width=6).pack(side="left")
+        self.cmb_server = ttk.Combobox(
+            self._row_server, textvariable=self.var_server_choice,
+            values=list(SERVER_PRESETS) + [CHOICE_CUSTOM], state="readonly")
+        self.cmb_server.pack(side="left", fill="x", expand=True)
+        self.cmb_server.bind("<<ComboboxSelected>>",
+                             lambda e: self._sync_server_row())
+
+        # 自定义地址行（仅选择"自定义"时显示）
+        self.row_custom = ttk.Frame(frm_conn)
+        self._entry_row(self.row_custom, "地址", self.var_server)
+        self._sync_server_row()
+
         self._entry_row(frm_conn, "房间码", self.var_room, upper=True)
         self._entry_row(frm_conn, "口令", self.var_password, show="*")
         self._entry_row(frm_conn, "昵称", self.var_nickname)
@@ -218,6 +248,13 @@ class GuiApp:
 
         self.root.after(POLL_MS, self._poll_events)
 
+    def _sync_server_row(self):
+        """根据线路选择显示/隐藏自定义地址输入行。"""
+        if self.var_server_choice.get() == CHOICE_CUSTOM:
+            self.row_custom.pack(fill="x", after=self._row_server)
+        else:
+            self.row_custom.pack_forget()
+
     def _entry_row(self, parent, label, var, show=None, upper=False):
         row = ttk.Frame(parent)
         row.pack(fill="x", padx=8, pady=3)
@@ -231,11 +268,20 @@ class GuiApp:
     # ---------------- 动作 ----------------
 
     def _join(self):
-        server = self.var_server.get().strip()
+        choice = self.var_server_choice.get()
+        if choice in SERVER_PRESETS:
+            server = SERVER_PRESETS[choice]
+            server_label = choice
+        else:
+            server = self.var_server.get().strip()
+            server_label = server
+            if not server:
+                messagebox.showwarning(APP_NAME, "请输入自定义服务器地址")
+                return
         room = self.var_room.get().strip().upper()
         nickname = self.var_nickname.get().strip()
-        if not server or not room or not nickname:
-            messagebox.showwarning(APP_NAME, "请填写服务器、房间码和昵称")
+        if not room or not nickname:
+            messagebox.showwarning(APP_NAME, "请填写房间码和昵称")
             return
         if len(room) != 6:
             messagebox.showwarning(APP_NAME, "房间码必须是 6 位")
@@ -265,7 +311,7 @@ class GuiApp:
         threading.Thread(target=runner, daemon=True, name="engine").start()
         self.btn_join.configure(state="disabled")
         self.btn_leave.configure(state="normal")
-        self._log(f"正在加入房间 {room} ...")
+        self._log(f"正在通过「{server_label}」加入房间 {room} ...")
 
     def _disconnect(self):
         if self.engine:
@@ -307,10 +353,12 @@ class GuiApp:
 
     def _save_cfg(self):
         self.cfg.update({
-            "server": self.var_server.get().strip(),
+            "server_preset": self.var_server_choice.get(),
+            "server_custom": self.var_server.get().strip(),
             "room": self.var_room.get().strip().upper(),
             "nickname": self.var_nickname.get().strip(),
         })
+        self.cfg.pop("server", None)  # 清理旧版字段
         save_config(self.cfg)
 
     # ---------------- 引擎事件轮询 ----------------
