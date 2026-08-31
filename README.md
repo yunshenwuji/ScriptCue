@@ -41,17 +41,19 @@ pip install -r requirements.txt
 python -m uvicorn server.main:app --host 0.0.0.0 --port 8000
 ```
 
-或使用 Docker（在仓库根目录执行）：
+或使用 Docker（在仓库根目录执行，审计日志存于 `./data` 目录）：
 
 ```bash
-docker build -t scriptcue-server .
-docker run -d -p 8000:8000 -v scriptcue-data:/app/data --name scriptcue-server scriptcue-server
+docker build -t yunshenwuji/scriptcue-server:latest .
+mkdir -p data && sudo chown -R 10001:10001 data
+docker run -d -p 8000:8000 -v "$(pwd)/data:/app/data" --name scriptcue-server yunshenwuji/scriptcue-server:latest
 ```
 
-或直接使用 docker compose：
+或使用 docker compose（部署机上直接拉取 Docker Hub 镜像，无需源码）：
 
 ```bash
-docker compose up -d --build
+mkdir -p data && sudo chown -R 10001:10001 data
+docker compose pull && docker compose up -d
 ```
 
 ### 主控端

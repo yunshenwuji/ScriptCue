@@ -19,8 +19,9 @@ COPY controller/ ./controller/
 # 审计日志等运行时数据目录，部署时挂载卷保留
 ENV SC_DATA_DIR=/app/data
 
-# 以非特权用户运行；数据目录归其所有（命名卷首次初始化会继承该属主）
-RUN useradd -r -s /usr/sbin/nologin scriptcue \
+# 以非特权用户运行；固定 UID/GID 10001，便于绑定挂载宿主机目录时的属主管理
+RUN groupadd -g 10001 scriptcue \
+    && useradd -r -u 10001 -g scriptcue -s /usr/sbin/nologin scriptcue \
     && mkdir -p /app/data \
     && chown -R scriptcue:scriptcue /app/data
 USER scriptcue
