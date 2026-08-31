@@ -51,9 +51,9 @@ jobs:
             arch: x86_64
     runs-on: ${{ matrix.runner }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.13"
 
@@ -64,15 +64,15 @@ jobs:
         working-directory: agent
         run: bash build_macos.sh
 
-      - name: 压缩 .app（保留包属性）
+      - name: 压缩 .app（保留包属性；.app 是目录，单文件分发必须压缩）
         run: >
           ditto -c -k --keepParent agent/dist/ScriptCue.app
-          "ScriptCue-${{ matrix.arch }}.app.zip"
+          "ScriptCueAgent-macos-${{ matrix.arch }}.zip"
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
-          name: ScriptCue-${{ matrix.arch }}
-          path: "ScriptCue-${{ matrix.arch }}.app.zip"
+          name: ScriptCueAgent-macos-${{ matrix.arch }}
+          path: "ScriptCueAgent-macos-${{ matrix.arch }}.zip"
 
   # 汇总创建 Release（仅 tag 触发；手动运行只产出上方 artifacts）
   release:
