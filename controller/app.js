@@ -20,6 +20,7 @@ const state = {
   serverOffset: 0,          // 服务器时间 - 本地时间（粗估，仅用于倒计时显示）
   agents: new Map(),        // session_id -> AgentState
   activeCmd: null,          // {command_id, command, at, receipts: Map}
+  pendingCancels: new Set(),// 已请求取消、等待服务器确认的指令
   lastReceipts: null,       // 最近一次已结束指令的回执汇总
   reconnectAttempt: 0,
   manualLeave: false,
@@ -88,6 +89,7 @@ function dispatch(msg) {
       state.roomName = msg.room_name;
       state.serverOffset = (msg.server_time || Date.now()) - Date.now();
       state.agents = new Map((msg.agents || []).map(a => [a.session_id, a]));
+      state.pendingCancels.clear();
       state.manualLeave = false;
       setConnPill("online");
       showRoomView();
@@ -111,6 +113,7 @@ function dispatch(msg) {
       break;
 
     case "command.cancelled":
+      state.pendingCancels.delete(msg.command_id);
       if (state.activeCmd && state.activeCmd.command_id === msg.command_id) {
         state.activeCmd = null;
         hideCountdownBanner();
@@ -341,7 +344,12 @@ function startCountdown() {
   stopCountdown();
   const tick = () => {
     const cmd = state.activeCmd;
-    if (!cmd) { stopCountdown(); hideCountdownBanner(); return; }
+    // 指令不存在或已请求取消时立即停止，避免取消确认到达前横幅被重新显示
+    if (!cmd || state.pendingCancels.has(cmd.command_id)) {
+      stopCountdown();
+      hideCountdownBanner();
+      return;
+    }
     const remain = cmd.at - serverNow();
     const label = CMD_TEXT[cmd.command] || cmd.command;
     if (remain > 0) {
@@ -508,6 +516,10 @@ function bindEvents() {
 
   $("btn-cancel-cmd").onclick = () => {
     if (state.activeCmd) {
+      // 立即隐藏横幅并登记取消意图，防止确认到达前倒计时把横幅重新显示
+      state.pendingCancels.add(state.activeCmd.command_id);
+      stopCountdown();
+      hideCountdownBanner();
       send({ type: "controller.cancel", command_id: state.activeCmd.command_id });
     }
   };
