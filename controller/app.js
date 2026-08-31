@@ -371,7 +371,7 @@ function stopCountdown() {
 }
 
 function scheduleReceiptTimeout(at) {
-  const waitMs = at - serverOffset - Date.now() + RECEIPT_TIMEOUT_MS;
+  const waitMs = at - serverNow() + RECEIPT_TIMEOUT_MS;
   setTimeout(finalizeReceipts, Math.max(0, waitMs));
 }
 
