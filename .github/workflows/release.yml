@@ -1,0 +1,93 @@
+# 发版打包流水线：
+# - 推送 v* 标签 → 三平台打包并创建 GitHub Release（附产物）
+# - 手动触发（workflow_dispatch）→ 仅执行打包，产物在 Actions 运行页下载（用于验证打包）
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  # Windows x64 单文件（PyInstaller onefile，运行于 x64 runner，产物仅支持 64 位 Windows）
+  build-windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: 安装依赖
+        run: pip install -r agent/requirements.txt pyinstaller
+
+      - name: 打包 Windows x64
+        working-directory: agent
+        run: .\build_windows.ps1
+
+      - name: 重命名产物（标注平台与架构）
+        run: Move-Item agent\dist\ScriptCueAgent.exe ScriptCueAgent-windows-x64.exe
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ScriptCueAgent-windows-x64
+          path: ScriptCueAgent-windows-x64.exe
+
+  # macOS 双架构：Apple Silicon（arm64）与 Intel（x86_64）各打一包，
+  # PyInstaller 不支持跨架构构建，必须分别在对应架构 runner 上打包
+  build-macos:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: macos-latest      # Apple Silicon
+            arch: arm64
+          - runner: macos-15-intel    # Intel
+            arch: x86_64
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: 安装依赖
+        run: pip install -r agent/requirements.txt pyinstaller
+
+      - name: 打包 macOS ${{ matrix.arch }}
+        working-directory: agent
+        run: bash build_macos.sh
+
+      - name: 压缩 .app（保留包属性）
+        run: >
+          ditto -c -k --keepParent agent/dist/ScriptCue.app
+          "ScriptCue-${{ matrix.arch }}.app.zip"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ScriptCue-${{ matrix.arch }}
+          path: "ScriptCue-${{ matrix.arch }}.app.zip"
+
+  # 汇总创建 Release（仅 tag 触发；手动运行只产出上方 artifacts）
+  release:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [build-windows, build-macos]
+    runs-on: ubuntu-latest
+    steps:
+      - name: 汇集打包产物
+        uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: 创建 GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/*
+          generate_release_notes: true
