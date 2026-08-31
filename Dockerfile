@@ -1,7 +1,16 @@
 # ScriptCue 服务端镜像
 # 构建上下文为仓库根目录（需打包跨组件的 controller/），在根目录执行：
-#   docker build -t scriptcue-server .
+#   docker build -t yunshenwuji/scriptcue-server:latest .
 FROM python:3.13-slim
+
+# 时区固化为东八区：审计日志与运行日志按本地时间呈现，便于演出排障。
+# （同步机制基于 Unix 时间戳，本就不受时区影响；slim 镜像不含 tzdata，需显式安装）
+ENV TZ=Asia/Shanghai
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends tzdata \
+    && ln -fs /usr/share/zoneinfo/Asia/Shanghai /etc/localtime \
+    && echo "Asia/Shanghai" > /etc/timezone \
+    && rm -rf /var/lib/apt/lists/*
 
 # 容器内日志即时可见（docker logs 不被缓冲）、不生成字节码文件
 ENV PYTHONUNBUFFERED=1 \
