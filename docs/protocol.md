@@ -39,16 +39,20 @@
 
 ```jsonc
 // 加入房间
-{"type": "agent.join", "proto": 1, "room_code": "AB12CD", "password": "可选", "nickname": "口述员-小王-剪映", "token": "重连时携带，可省略"}
+{"type": "agent.join", "proto": 1, "room_code": "AB12CD", "password": "可选", "nickname": "口述员-小王-剪映", "token": "重连时携带，可省略", "compensation_ms": 0}
 // 加入时房间不存在则自动创建（用于服务器重启后客户端自动恢复房间）
-{"type": "agent.join", "proto": 1, "room_code": "AB12CD", "nickname": "...", "auto_create": true, "room_name": "周六下午场"}
+{"type": "agent.join", "proto": 1, "room_code": "AB12CD", "nickname": "...", "auto_create": true, "room_name": "周六下午场", "compensation_ms": 80}
 ```
+
+`compensation_ms` 为被控端本地当前补偿值：新建会话时服务器用它初始化（保证服务器重启重建房间后校准结果不丢失）；令牌恢复会话时以服务器值为准。
 
 服务器应答：
 
 ```jsonc
-{"type": "agent.joined", "room_code": "AB12CD", "token": "会话令牌", "server_time": ..., "compensation_ms": 0, "lead_ms": 3000}
+{"type": "agent.joined", "room_code": "AB12CD", "token": "会话令牌", "server_time": ..., "compensation_ms": 0, "lead_ms": 3000, "resumed": false}
 ```
+
+`resumed: true` 表示凭令牌恢复了既有会话（被控端此时采纳服务器下发的补偿值）。
 
 ### AgentState 结构（设备状态快照）
 

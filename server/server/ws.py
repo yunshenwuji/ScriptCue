@@ -273,6 +273,13 @@ async def run_agent_session(ws: WebSocket, manager: RoomManager,
         except RoomFullError:
             await _send_error(ws, p.ERR_ROOM_FULL, "房间设备数已达上限")
             return
+        # 新会话恢复客户端本地补偿值（服务器重启重建房间时保留校准结果）
+        join_comp = first.get("compensation_ms")
+        if isinstance(join_comp, (int, float)):
+            session.compensation_ms = max(COMP_MIN, min(COMP_MAX, int(join_comp)))
+        resumed = False
+    else:
+        resumed = True
 
     # 旧连接顶替
     if session.ws is not None and session.ws is not ws:
@@ -284,7 +291,7 @@ async def run_agent_session(ws: WebSocket, manager: RoomManager,
     await _send(ws, {"type": p.AGENT_JOINED, "room_code": room.code,
                      "token": session.token, "server_time": now_ms(),
                      "compensation_ms": session.compensation_ms,
-                     "lead_ms": room.lead_ms})
+                     "lead_ms": room.lead_ms, "resumed": resumed})
     await room.notify_controller({"type": p.AGENT_UPDATED, "agent": session.state()})
     audit.log("agent_join", room=room.code, session=session.session_id,
               nickname=session.nickname)

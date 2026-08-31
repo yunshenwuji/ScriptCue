@@ -160,6 +160,8 @@ class AgentEngine:
         join_msg = {
             "type": p.AGENT_JOIN, "proto": p.PROTO_VERSION,
             "room_code": self.room_code, "nickname": self.nickname,
+            # 携带本地补偿值：服务器重启后房间重建时用于恢复（否则校准结果丢失）
+            "compensation_ms": self.compensation_ms,
         }
         if self.password:
             join_msg["password"] = self.password
@@ -182,7 +184,11 @@ class AgentEngine:
             raise ConnectionError(f"意外的应答: {first.get('type')}")
 
         self.token = first.get("token")
-        self.compensation_ms = first.get("compensation_ms", self.compensation_ms)
+        # 仅当服务器持有有效补偿值（令牌恢复会话等）时采纳，
+        # 否则保留本地值（房间重建场景服务器为新会话，补偿值为默认 0）
+        server_comp = first.get("compensation_ms")
+        if isinstance(server_comp, (int, float)) and self.token and first.get("resumed"):
+            self.compensation_ms = server_comp
         self.lead_ms = first.get("lead_ms", p.DEFAULT_LEAD_MS)
         self._has_joined = True
         self._auto_create = False
