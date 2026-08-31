@@ -356,7 +356,7 @@ class AgentEngine:
             actual_local, cancelled = precise_wait_until(local_fire, cancel)
             self._pending_fires.pop(command_id, None)
             if cancelled:
-                self._emit({"event": "command_cancelled", "command_id": command_id})
+                # command.cancel 消息到达时已发出 command_cancelled 事件，此处不再重复
                 return
 
             status, detail = "ok", None
