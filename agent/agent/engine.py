@@ -57,7 +57,9 @@ class AgentEngine:
         self._loop: asyncio.AbstractEventLoop | None = None
         self._pending_fires: dict[str, threading.Event] = {}
         self._has_joined = False     # 本进程是否成功加入过该房间
-        self._auto_create = False    # 服务器重启后自动重建房间
+        # 提供了房间名即允许自动重建房间：覆盖"被控端先于主控端启动"与
+        # "服务器重启后恢复"两种场景
+        self._auto_create = bool(room_name)
         self._stopped = False
 
     # ------------------------------------------------------------------
@@ -176,7 +178,7 @@ class AgentEngine:
 
         if first.get("type") == p.ERROR:
             code = first.get("code")
-            if code == p.ERR_ROOM_NOT_FOUND and self._has_joined:
+            if code == p.ERR_ROOM_NOT_FOUND:
                 # 服务器重启导致房间丢失 → 下次重连自动重建
                 self._auto_create = True
             raise ConnectionError(f"加入房间失败: {first.get('message')} ({code})")
