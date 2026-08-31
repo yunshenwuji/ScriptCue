@@ -16,9 +16,13 @@ server/data/
 # 环境配置
 .env
 
+# 日志
+*.log
+
 # IDE / 系统
 .idea/
 .vscode/
 .qoder/
 .DS_Store
 Thumbs.db
+desktop.ini

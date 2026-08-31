@@ -1,3 +1,5 @@
+.qoder
+.venv
 .git
 .gitignore
 **/__pycache__/
@@ -7,3 +9,19 @@ docs/
 server/data/
 controller/node_modules/
 *.md
+
+# 构建产物与打包件（当前位于 agent/ 下，显式排除以防目录结构变化后泄漏）
+**/build/
+**/dist/
+*.spec
+*.exe
+
+# 环境配置与日志
+.env
+**/.env
+*.log
+
+# 系统文件与编排文件（镜像构建不需要）
+Thumbs.db
+.DS_Store
+docker-compose.yml
