@@ -7,7 +7,8 @@ services:
   scriptcue-server:
     image: yunshenwuji/scriptcue-server:latest
     ports:
-      - "8000:8000"
+      # 宿主机 13658 → 容器 8000；主控端浏览器与被控端连接地址均需使用 :13658
+      - "13658:8000"
     volumes:
       - ./data:/app/data
     restart: unless-stopped
