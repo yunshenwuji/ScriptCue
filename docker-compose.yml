@@ -1,8 +1,6 @@
 services:
   scriptcue-server:
-    build:
-      context: .
-      dockerfile: server/Dockerfile
+    build: .
     image: scriptcue-server
     ports:
       - "8000:8000"

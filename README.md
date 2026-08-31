@@ -44,7 +44,7 @@ python -m uvicorn server.main:app --host 0.0.0.0 --port 8000
 或使用 Docker（在仓库根目录执行）：
 
 ```bash
-docker build -f server/Dockerfile -t scriptcue-server .
+docker build -t scriptcue-server .
 docker run -d -p 8000:8000 -v scriptcue-data:/app/data --name scriptcue-server scriptcue-server
 ```
 
