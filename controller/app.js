@@ -104,6 +104,7 @@ function dispatch(msg) {
     case "command.scheduled":
       state.activeCmd = {
         command_id: msg.command_id, command: msg.command, at: msg.at,
+        target: msg.target || null,
         receipts: new Map(),
       };
       state.lastReceipts = null;
@@ -377,10 +378,10 @@ function scheduleReceiptTimeout(at) {
 function finalizeReceipts() {
   const cmd = state.activeCmd;
   if (!cmd) return;
-  // 汇总：未回执的在线设备标记为"未回执"
+  // 汇总：未回执的在线设备标记为"未回执"（单设备指令仅统计目标设备）
   state.lastReceipts = {
     command: cmd.command,
-    rows: [...state.agents.values()].map(agent => {
+    rows: receiptAgents(cmd.target).map(agent => {
       const r = cmd.receipts.get(agent.session_id);
       return {
         nickname: agent.nickname,
@@ -401,7 +402,7 @@ function renderReceipts() {
   const cmd = state.activeCmd;
   const data = cmd
     ? { command: cmd.command,
-        rows: [...state.agents.values()].map(agent => {
+        rows: receiptAgents(cmd.target).map(agent => {
           const r = cmd.receipts.get(agent.session_id);
           return { nickname: agent.nickname, delta_ms: r ? r.delta_ms : null,
                    status: r ? r.status : "waiting" };
@@ -482,6 +483,14 @@ function fmtMs(v) {
 
 function fmtSigned(v) {
   return v == null ? "—" : `${v > 0 ? "+" : ""}${Math.round(v)}ms`;
+}
+
+/** 回执应统计的设备：单设备指令仅目标设备，全体指令为全部设备 */
+function receiptAgents(target) {
+  if (target && state.agents.has(target)) {
+    return [state.agents.get(target)];
+  }
+  return [...state.agents.values()];
 }
 
 function bindEvents() {

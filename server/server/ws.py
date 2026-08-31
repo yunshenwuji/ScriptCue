@@ -98,7 +98,8 @@ async def _controller_handle_command(ws, room: Room, msg: dict, audit: AuditLog)
         await room.broadcast_agents(exec_msg)
 
     await _send(ws, {"type": p.CMD_SCHEDULED, "command_id": command_id,
-                     "command": command, "at": at, "lead_ms": lead_ms})
+                     "command": command, "at": at, "lead_ms": lead_ms,
+                     "target": target_id})
     audit.log("command", room=room.code, command_id=command_id, command=command,
               at=at, lead_ms=lead_ms, target=target_id)
     asyncio.create_task(_cleanup_pending(room, command_id, at))

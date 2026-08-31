@@ -102,10 +102,10 @@
 ### 4.2 服务器确认（→ 主控端）
 
 ```jsonc
-{"type": "command.scheduled", "command_id": "uuid", "command": "play", "at": 1700000003156, "lead_ms": 3000}
+{"type": "command.scheduled", "command_id": "uuid", "command": "play", "at": 1700000003156, "lead_ms": 3000, "target": "agent-N 或省略"}
 ```
 
-`at` = 服务器收到请求时刻 + lead_ms，即**执行时刻 T（服务器时间基准）**。服务器随即广播：
+`at` = 服务器收到请求时刻 + lead_ms，即**执行时刻 T（服务器时间基准）**。`target` 为单设备指令的目标会话（全体指令为省略/空），主控端据此过滤回执统计范围。服务器随即广播：
 
 ### 4.3 服务器广播（→ 全体被控端）
 
