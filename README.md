@@ -90,7 +90,7 @@ python -m agent.cli --server ws://127.0.0.1:8000 --room <房间码> --nickname <
 
 - 推送 `v*` 标签（如 `git tag v1.0.0 && git push origin v1.0.0`）自动触发 GitHub Actions 打包，并创建 GitHub Release，产物包括：
   - `ScriptCueAgent-windows-x64.exe`（Windows 10+ 64 位单文件）；
-  - `ScriptCue-arm64.app.zip`（macOS Apple Silicon）与 `ScriptCue-x86_64.app.zip`（macOS Intel）。
+  - `ScriptCueAgent-macos-arm64.dmg`（macOS Apple Silicon）与 `ScriptCueAgent-macos-x86_64.dmg`（macOS Intel，拖拽安装镜像）。
   也可在 Actions 页面手动运行 **Release** workflow 仅验证打包（产物在运行页下载）；
 - 服务端 Docker Hub 镜像（`yunshenwuji/scriptcue-server`，amd64）在 Actions 页面手动运行 **Docker Hub** workflow 推送：从 `main` 触发推送 `latest`，从 tag 触发推送对应版本号。需先在仓库 Secrets 配置 `DOCKERHUB_USERNAME` 与 `DOCKERHUB_TOKEN`；
 - 未签名产物的首次打开方法见 [首次打开指引](docs/first-run.md)。

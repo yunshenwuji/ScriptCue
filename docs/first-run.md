@@ -16,7 +16,15 @@
 
 ---
 
-## macOS：Gatekeeper 提示
+## macOS：安装与首次打开
+
+### 安装（挂载 .dmg）
+
+1. 双击下载的 `ScriptCueAgent-macos-<架构>.dmg` 挂载磁盘映像；
+2. 在弹出窗口中将 **ScriptCue** 图标拖到右侧 **Applications** 快捷方式，即完成安装；
+3. 安装完成后可在启动台或"应用程序"文件夹找到述播（Apple Silicon 用 arm64 包，Intel 芯片用 x86_64 包）。
+
+### 首次打开（Gatekeeper 提示）
 
 首次双击 `ScriptCue.app` 时，可能提示"无法打开，因为来自身份不明开发者"或"已损坏"：
 

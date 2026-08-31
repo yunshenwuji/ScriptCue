@@ -60,19 +60,14 @@ jobs:
       - name: 安装依赖
         run: pip install -r agent/requirements.txt pyinstaller
 
-      - name: 打包 macOS ${{ matrix.arch }}
+      - name: 打包 macOS ${{ matrix.arch }}（.app + 拖拽安装 .dmg）
         working-directory: agent
         run: bash build_macos.sh
-
-      - name: 压缩 .app（保留包属性；.app 是目录，单文件分发必须压缩）
-        run: >
-          ditto -c -k --keepParent agent/dist/ScriptCue.app
-          "ScriptCueAgent-macos-${{ matrix.arch }}.zip"
 
       - uses: actions/upload-artifact@v7
         with:
           name: ScriptCueAgent-macos-${{ matrix.arch }}
-          path: "ScriptCueAgent-macos-${{ matrix.arch }}.zip"
+          path: "agent/dist/ScriptCueAgent-macos-${{ matrix.arch }}.dmg"
 
   # 汇总创建 Release（仅 tag 触发；手动运行只产出上方 artifacts）
   release:
