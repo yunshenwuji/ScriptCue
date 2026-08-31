@@ -13,7 +13,9 @@
 """
 
 import asyncio
+import contextlib
 import json
+import os
 import queue
 import subprocess
 import sys
@@ -33,6 +35,30 @@ UI_FONT_LARGE = ("Microsoft YaHei UI", 20, "bold")
 UI_FONT = ("Microsoft YaHei UI", 10)
 
 CMD_TEXT = {p.CMD_PLAY: "起播", p.CMD_PAUSE: "暂停", p.CMD_TEST: "测试"}
+
+
+@contextlib.contextmanager
+def _silence_c_stderr():
+    """临时重定向 C 层 stderr 到空设备。
+
+    Tcl/Tk 运行时用 libpng 解码其自带的 PNG 资源，这些 PNG 内嵌的
+    ICC 色彩配置块不符合规范，libpng 会向 stderr 打印
+    "iCCP: known incorrect sRGB profile" 警告。该警告无害（图像正常解码）
+    且无法通过配置关闭，只能在 UI 构建期间以文件描述符级重定向屏蔽。
+    """
+    try:
+        devnull = os.open(os.devnull, os.O_WRONLY)
+        saved_stderr = os.dup(2)
+    except OSError:
+        yield
+        return
+    try:
+        os.dup2(devnull, 2)
+        yield
+    finally:
+        os.dup2(saved_stderr, 2)
+        os.close(devnull)
+        os.close(saved_stderr)
 
 # ---------------------------------------------------------------------------
 # 配置持久化（昵称记忆，R-01）
@@ -102,7 +128,8 @@ class GuiApp:
         self.pending: dict[str, dict] = {}   # command_id -> {command, local_fire}
         self.panel: tk.Toplevel | None = None
 
-        self._build_ui()
+        with _silence_c_stderr():
+            self._build_ui()
 
     # ---------------- UI 构建 ----------------
 
@@ -374,7 +401,8 @@ class GuiApp:
         if self.panel is not None and self.panel.winfo_exists():
             self.panel.lift()
             return
-        panel = tk.Toplevel(self.root)
+        with _silence_c_stderr():
+            panel = tk.Toplevel(self.root)
         self.panel = panel
         panel.title("述播小面板")
         panel.overrideredirect(True)
