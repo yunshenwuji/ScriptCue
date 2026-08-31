@@ -17,7 +17,10 @@ COPY server/server/ ./server/
 COPY controller/ ./controller/
 
 # 审计日志等运行时数据目录，部署时挂载卷保留
+# 注意：容器内包被扁平化复制为 /app/server（与源码三层布局不同），
+# main.py 的"仓库根目录"推断会失效，因此主控端目录必须显式指定
 ENV SC_DATA_DIR=/app/data
+ENV SC_CONTROLLER_DIR=/app/controller
 
 # 以非特权用户运行；固定 UID/GID 10001，便于绑定挂载宿主机目录时的属主管理
 RUN groupadd -g 10001 scriptcue \
