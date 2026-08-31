@@ -83,3 +83,7 @@ python -m agent.cli --server ws://127.0.0.1:8000 --room <房间码> --nickname <
 - 通信协议为版本化 JSON 文本协议，见 `docs/protocol.md`，服务端、主控端、被控端三方共用；
 - 协议消息结构常量定义在 `server/server/protocol.py`，被控端维护一份等价副本 `agent/agent/protocol.py`；
 - 服务端与被控端可独立部署，互不依赖对方的代码包。
+
+## 开源协议
+
+本项目以 [MIT License](LICENSE) 协议开源，与述格（ScriptGrid）保持一致。
