@@ -17,9 +17,9 @@ jobs:
   build-windows:
     runs-on: windows-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.13"
 
@@ -33,7 +33,7 @@ jobs:
       - name: 重命名产物（标注平台与架构）
         run: Move-Item agent\dist\ScriptCueAgent.exe ScriptCueAgent-windows-x64.exe
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: ScriptCueAgent-windows-x64
           path: ScriptCueAgent-windows-x64.exe
@@ -81,13 +81,13 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: 汇集打包产物
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           path: dist
           merge-multiple: true
 
       - name: 创建 GitHub Release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
           files: dist/*
           generate_release_notes: true
