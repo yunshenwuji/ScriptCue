@@ -66,19 +66,13 @@
       <div id="agent-list"></div>
 
       <div class="controls">
-        <button id="btn-play" class="primary big hold-btn">
-          <span class="hold-fill"></span>
-          <span class="hold-label">全体起播（长按 1 秒）</span>
-        </button>
+        <button id="btn-play" class="primary big">全体起播</button>
         <div class="row">
           <button id="btn-pause">全体暂停</button>
           <button id="btn-resume">恢复播放</button>
         </div>
         <div class="row">
-          <button id="btn-test-all" class="hold-btn">
-            <span class="hold-fill"></span>
-            <span class="hold-label">全体测试（长按）</span>
-          </button>
+          <button id="btn-test-all">全体测试</button>
           <label class="lead-label">提前量
             <input id="lead-ms" type="number" value="3000" min="1000" max="30000" step="500"> ms
           </label>
@@ -88,6 +82,19 @@
       <div class="card">
         <h3 id="receipt-title">最近指令回执</h3>
         <div id="receipt-list" class="receipts"><p class="muted">尚无指令回执</p></div>
+      </div>
+
+      <!-- 指令二次确认弹框（C-10 防误触，替代长按） -->
+      <div id="confirm-modal" class="modal" hidden>
+        <div class="modal-mask"></div>
+        <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="confirm-title">
+          <h3 id="confirm-title">确认操作</h3>
+          <p id="confirm-text"></p>
+          <div class="modal-actions">
+            <button id="btn-confirm-no">取消</button>
+            <button id="btn-confirm-yes" class="primary">确认</button>
+          </div>
+        </div>
       </div>
     </section>
   </main>

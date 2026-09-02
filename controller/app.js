@@ -4,7 +4,6 @@
 "use strict";
 
 const PROTO = 1;
-const HOLD_MS = 1000;            // 长按确认时长（C-10 防误触）
 const RECEIPT_TIMEOUT_MS = 8000; // 回执等待窗口
 const DELTA_WARN_MS = 50;        // 偏差告警阈值（PRD 验收标准）
 const RECONNECT_MAX_S = 10;      // 重连退避上限
@@ -19,6 +18,7 @@ const state = {
   roomName: null,
   serverOffset: 0,          // 服务器时间 - 本地时间（粗估，仅用于倒计时显示）
   agents: new Map(),        // session_id -> AgentState
+  agentEls: new Map(),      // session_id -> 卡片元素引用（增量更新用）
   activeCmd: null,          // {command_id, command, at, receipts: Map}
   pendingCancels: new Set(),// 已请求取消、等待服务器确认的指令
   lastReceipts: null,       // 最近一次已结束指令的回执汇总
@@ -89,6 +89,7 @@ function dispatch(msg) {
       state.roomName = msg.room_name;
       state.serverOffset = (msg.server_time || Date.now()) - Date.now();
       state.agents = new Map((msg.agents || []).map(a => [a.session_id, a]));
+      resetAgentEls();
       state.pendingCancels.clear();
       state.manualLeave = false;
       setConnPill("online");
@@ -163,6 +164,8 @@ function leaveRoom(silent) {
   if (state.ws) { state.ws.onclose = null; state.ws.close(); state.ws = null; }
   state.token = null;
   state.activeCmd = null;
+  resetAgentEls();
+  closeConfirm();
   stopCountdown();
   hideCountdownBanner();
   $("room-view").hidden = true;
@@ -199,70 +202,65 @@ function showToast(text) {
 const QUALITY_TEXT = { excellent: "优", good: "良", poor: "差", none: "未同步" };
 const CMD_TEXT = { play: "起播", pause: "暂停", test: "测试" };
 
+function resetAgentEls() {
+  state.agentEls.clear();
+  $("agent-list").innerHTML = "";
+}
+
+/** 增量渲染：已存在的卡片只刷新动态部分，不重建节点。
+ *  心跳每 5 秒触发 agent.updated，若整表 innerHTML 重建，
+ *  正在输入的补偿值会每 5 秒被清空一次 */
 function renderAgents() {
   const list = $("agent-list");
-  list.innerHTML = "";
   const agents = [...state.agents.values()];
   const readyCount = agents.filter(a => a.online && a.ready).length;
   $("ready-count").textContent = agents.length
     ? `${readyCount}/${agents.filter(a => a.online).length} 在线就绪` : "";
 
+  // 移除已退出房间的设备卡片
+  for (const [sid, els] of state.agentEls) {
+    if (!state.agents.has(sid)) {
+      els.root.remove();
+      state.agentEls.delete(sid);
+    }
+  }
+
   if (!agents.length) {
     list.innerHTML = '<p class="muted">暂无设备，等待被控端加入…</p>';
     return;
   }
+  const empty = list.querySelector(".muted");
+  if (empty) empty.remove();
 
   for (const agent of agents) {
-    list.appendChild(renderAgentCard(agent));
+    let els = state.agentEls.get(agent.session_id);
+    if (!els) {
+      els = buildAgentCard(agent);
+      state.agentEls.set(agent.session_id, els);
+      list.appendChild(els.root);
+    }
+    updateAgentCard(agent, els);
   }
 }
 
-function renderAgentCard(agent) {
+/** 创建卡片骨架并绑定一次性事件，动态状态由 updateAgentCard 就地刷新 */
+function buildAgentCard(agent) {
   const card = document.createElement("div");
-  const q = agent.clock_quality || "none";
-  card.className = "agent " + (agent.online
-    ? (q === "poor" || q === "none" ? "bad-clock" : "online")
-    : "offline");
+  card.className = "agent";
 
   // 顶部：昵称 + 状态徽章
   const top = document.createElement("div");
   top.className = "agent-top";
   const nick = document.createElement("span");
   nick.className = "agent-nick";
-  nick.textContent = agent.nickname;
-  top.appendChild(nick);
-
-  if (!agent.online) {
-    top.appendChild(badge("离线", "state-offline"));
-  } else if (agent.ready) {
-    top.appendChild(badge("已就绪", "ready"));
-  } else {
-    top.appendChild(badge("未就绪", "not-ready"));
-  }
-  top.appendChild(badge("时钟" + (QUALITY_TEXT[q] || q), "q-" + q));
+  const stateBadge = document.createElement("span");
+  const qBadge = document.createElement("span");
+  top.append(nick, stateBadge, qBadge);
   card.appendChild(top);
 
   // 元信息：偏移 / RTT / 最近偏差
   const meta = document.createElement("div");
   meta.className = "agent-meta";
-  const parts = [];
-  if (agent.clock_offset_ms != null) {
-    parts.push(`偏移 ${fmtMs(agent.clock_offset_ms)}`);
-  }
-  if (agent.clock_rtt_ms != null) {
-    parts.push(`RTT ${fmtMs(agent.clock_rtt_ms)}`);
-  }
-  const receipt = state.activeCmd && state.activeCmd.receipts.get(agent.session_id);
-  if (receipt) {
-    const span = document.createElement("span");
-    span.className = "delta " + (Math.abs(receipt.delta_ms) <= DELTA_WARN_MS ? "ok" : "bad");
-    span.textContent = ` 最近触发偏差 ${fmtSigned(receipt.delta_ms)}`;
-    parts.push("");
-    meta.textContent = parts.filter(Boolean).join(" · ");
-    meta.appendChild(span);
-  } else {
-    meta.textContent = parts.join(" · ");
-  }
   card.appendChild(meta);
 
   // 操作行：单设备测试 + 补偿值编辑
@@ -272,7 +270,6 @@ function renderAgentCard(agent) {
   const testBtn = document.createElement("button");
   testBtn.className = "mini";
   testBtn.textContent = "测试触发";
-  testBtn.disabled = !agent.online;
   testBtn.onclick = () => sendCommand("test", agent.session_id);
   actions.appendChild(testBtn);
 
@@ -282,7 +279,6 @@ function renderAgentCard(agent) {
   const compInput = document.createElement("input");
   compInput.type = "number";
   compInput.min = "-10000"; compInput.max = "10000"; compInput.step = "10";
-  compInput.value = agent.compensation_ms ?? 0;
   compEditor.appendChild(compInput);
   compEditor.append(" ms ");
   const compBtn = document.createElement("button");
@@ -296,16 +292,58 @@ function renderAgentCard(agent) {
   };
   compEditor.appendChild(compBtn);
   actions.appendChild(compEditor);
-
   card.appendChild(actions);
-  return card;
+
+  return { root: card, nick, stateBadge, qBadge, meta, testBtn, compInput };
 }
 
-function badge(text, cls) {
-  const el = document.createElement("span");
+function setBadge(el, text, cls) {
   el.className = "badge " + cls;
   el.textContent = text;
-  return el;
+}
+
+/** 只改文本/类名/禁用态等动态部分，不替换任何节点 */
+function updateAgentCard(agent, els) {
+  const q = agent.clock_quality || "none";
+  els.root.className = "agent " + (agent.online
+    ? (q === "poor" || q === "none" ? "bad-clock" : "online")
+    : "offline");
+  els.nick.textContent = agent.nickname;
+
+  if (!agent.online) {
+    setBadge(els.stateBadge, "离线", "state-offline");
+  } else if (agent.ready) {
+    setBadge(els.stateBadge, "已就绪", "ready");
+  } else {
+    setBadge(els.stateBadge, "未就绪", "not-ready");
+  }
+  setBadge(els.qBadge, "时钟" + (QUALITY_TEXT[q] || q), "q-" + q);
+
+  const parts = [];
+  if (agent.clock_offset_ms != null) {
+    parts.push(`偏移 ${fmtMs(agent.clock_offset_ms)}`);
+  }
+  if (agent.clock_rtt_ms != null) {
+    parts.push(`RTT ${fmtMs(agent.clock_rtt_ms)}`);
+  }
+  els.meta.textContent = parts.join(" · ");
+  const receipt = state.activeCmd && state.activeCmd.receipts.get(agent.session_id);
+  if (receipt) {
+    const span = document.createElement("span");
+    span.className = "delta " + (Math.abs(receipt.delta_ms) <= DELTA_WARN_MS ? "ok" : "bad");
+    span.textContent = ` 最近触发偏差 ${fmtSigned(receipt.delta_ms)}`;
+    els.meta.appendChild(span);
+  }
+
+  els.testBtn.disabled = !agent.online;
+
+  // 补偿输入框：聚焦中不覆盖用户输入；已失焦但未提交的改动交由下次同步收敛
+  const serverVal = String(agent.compensation_ms ?? 0);
+  els.compInput.dataset.server = serverVal;
+  if (document.activeElement !== els.compInput
+      && els.compInput.value !== serverVal) {
+    els.compInput.value = serverVal;
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -448,29 +486,31 @@ function renderReceipts() {
 }
 
 // ---------------------------------------------------------------------------
-// 长按确认（C-10 防误触）
+// 指令二次确认弹框（C-10 防误触，替代长按：
+// 移动端长按易触发系统/浏览器自带菜单，改为点击后弹框确认）
 // ---------------------------------------------------------------------------
 
-function attachHold(button, action) {
-  let timer = 0;
-  const start = (e) => {
-    e.preventDefault();
-    button.classList.add("holding");
-    timer = setTimeout(() => {
-      button.classList.remove("holding");
-      action();
-    }, HOLD_MS);
-  };
-  const abort = () => {
-    clearTimeout(timer);
-    button.classList.remove("holding");
-  };
-  button.addEventListener("pointerdown", start);
-  for (const ev of ["pointerup", "pointerleave", "pointercancel"]) {
-    button.addEventListener(ev, abort);
+let pendingAction = null;        // 弹框待确认的动作
+let confirmReturnFocus = null;   // 关闭弹框后归还焦点的元素
+
+function askConfirm(title, text, action) {
+  pendingAction = action;
+  $("confirm-title").textContent = title;
+  $("confirm-text").textContent = text;
+  $("confirm-modal").hidden = false;
+  // 焦点移入弹框（默认落"取消"）：防止 Enter/Space 误触底层按钮，
+  // 并与 aria-modal 声明一致
+  confirmReturnFocus = document.activeElement;
+  $("btn-confirm-no").focus();
+}
+
+function closeConfirm() {
+  pendingAction = null;
+  $("confirm-modal").hidden = true;
+  if (confirmReturnFocus && document.contains(confirmReturnFocus)) {
+    confirmReturnFocus.focus();
   }
-  // 防止移动端双击缩放与长按弹出菜单
-  button.addEventListener("contextmenu", (e) => e.preventDefault());
+  confirmReturnFocus = null;
 }
 
 // ---------------------------------------------------------------------------
@@ -533,10 +573,25 @@ function bindEvents() {
     }
   };
 
-  attachHold($("btn-play"), () => sendCommand("play"));
-  attachHold($("btn-test-all"), () => sendCommand("test"));
+  $("btn-play").onclick = () => askConfirm("确认全体起播",
+    `将向全部在线设备下发起播指令，${Math.round(currentLeadMs() / 1000)} 秒倒计时结束后同时触发（倒计时内可取消）。`,
+    () => sendCommand("play"));
+  $("btn-test-all").onclick = () => askConfirm("确认全体测试",
+    "将向全部在线设备下发测试触发指令，用于核对各设备链路与同步精度。",
+    () => sendCommand("test"));
   $("btn-pause").onclick = () => sendCommand("pause");
   $("btn-resume").onclick = () => sendCommand("play");
+
+  $("btn-confirm-yes").onclick = () => {
+    const action = pendingAction;
+    closeConfirm();
+    if (action) action();
+  };
+  $("btn-confirm-no").onclick = closeConfirm;
+  document.querySelector("#confirm-modal .modal-mask").onclick = closeConfirm;
+  document.addEventListener("keydown", (e) => {
+    if (e.key === "Escape" && !$("confirm-modal").hidden) closeConfirm();
+  });
 }
 
 bindEvents();

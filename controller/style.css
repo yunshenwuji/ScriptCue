@@ -16,6 +16,10 @@
 
 * { box-sizing: border-box; }
 
+/* hidden 属性必须始终生效：作者样式（如 .banner 的 display:flex）的优先级
+   高于浏览器对 [hidden] 的默认 display:none，不加此规则横幅将无法隐藏 */
+[hidden] { display: none !important; }
+
 html { -webkit-text-size-adjust: 100%; }
 
 body {
@@ -129,8 +133,12 @@ button.mini { padding: 6px 10px; font-size: 13px; }
 #countdown-text { font-size: 16px; font-variant-numeric: tabular-nums; }
 
 .toast {
+  /* fixed + z-index 高于 .modal(50)，保证弹框打开期间断线等重要提示仍可见 */
+  position: fixed; left: 50%; bottom: 24px; transform: translateX(-50%);
+  z-index: 60;
   background: #333c52; color: #fff; border-radius: 10px;
-  padding: 10px 14px; margin-bottom: 12px; font-size: 13px;
+  padding: 10px 14px; font-size: 13px;
+  max-width: calc(100vw - 40px);
 }
 
 /* ---------- 设备列表 ---------- */
@@ -186,15 +194,28 @@ button.big {
   box-shadow: 0 4px 14px rgba(41,82,227,.35);
 }
 
-/* 长按确认按钮 */
-.hold-btn { position: relative; overflow: hidden; }
-.hold-fill {
-  position: absolute; inset: 0; width: 0%;
-  background: rgba(255,255,255,.28);
-  transition: width 0s;
+/* ---------- 指令二次确认弹框 ---------- */
+.modal {
+  position: fixed; inset: 0; z-index: 50;
+  display: flex; align-items: center; justify-content: center;
+  padding: 20px;
 }
-.hold-btn.holding .hold-fill { transition: width 1s linear; width: 100%; }
-.hold-label { position: relative; }
+.modal-mask {
+  position: absolute; inset: 0;
+  background: rgba(10, 14, 26, .55);
+}
+.modal-card {
+  position: relative; width: 100%; max-width: 340px;
+  background: var(--card); border-radius: var(--radius);
+  padding: 18px; box-shadow: 0 12px 40px rgba(0, 0, 0, .3);
+}
+.modal-card h3 { margin: 0 0 8px; font-size: 16px; }
+.modal-card p {
+  margin: 0 0 16px; font-size: 13px;
+  color: var(--muted); line-height: 1.6;
+}
+.modal-actions { display: flex; gap: 10px; }
+.modal-actions button { flex: 1; }
 
 .lead-label {
   display: flex; align-items: center; gap: 6px;
