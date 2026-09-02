@@ -12,7 +12,13 @@ run_coroutine_threadsafe 回事件循环发送回执。所有 on_event 回调
 import asyncio
 import json
 import logging
+import ssl
 import threading
+
+try:
+    import certifi
+except ImportError:  # pragma: no cover - certifi 应随依赖一并安装
+    certifi = None
 
 import websockets
 
@@ -26,6 +32,23 @@ logger = logging.getLogger("scriptcue.agent")
 
 # 触发前倒数提示音的起点（R-08）
 BEEP_COUNTDOWN_MS = 3000
+
+
+def _build_ssl_context() -> ssl.SSLContext:
+    """构造 wss:// 连接用的 SSL 上下文：系统证书库 ∪ certifi 根证书（加法）。
+
+    - Windows：create_default_context() 已加载系统证书库，再追加 certifi 只增不减，
+      现有可连的服务器不会退化；
+    - macOS：Python 的 OpenSSL 不读系统钥匙串，系统库常为空，靠 certifi 补齐，
+      否则对任何 wss:// 都会报 "unable to get local issuer certificate"。
+    """
+    ctx = ssl.create_default_context()
+    if certifi is not None:
+        try:
+            ctx.load_verify_locations(certifi.where())
+        except OSError:  # certifi 包缺失/损坏时退回系统库，至少不影响 Windows
+            logger.warning("无法加载 certifi CA 包，仅使用系统证书库")
+    return ctx
 
 
 class AgentEngine:
@@ -129,7 +152,9 @@ class AgentEngine:
             await asyncio.sleep(delay)
 
     async def _connect_and_serve(self) -> None:
-        async with websockets.connect(self.server_url, open_timeout=10,
+        # 仅 wss:// 需要 SSL 上下文；ws:// 传 None（给明文连接传 ctx 会被 websockets 拒绝）
+        ssl_ctx = _build_ssl_context() if self.server_url.startswith("wss://") else None
+        async with websockets.connect(self.server_url, ssl=ssl_ctx, open_timeout=10,
                                       ping_interval=10, ping_timeout=20) as ws:
             self._ws = ws
             self._loop = asyncio.get_running_loop()

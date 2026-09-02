@@ -2,7 +2,7 @@
 # 述播被控端 macOS 打包脚本（在 agent/ 目录执行）
 # 产物: dist/ScriptCue.app 与 dist/ScriptCueAgent-macos-<架构>.dmg（拖拽安装镜像）
 #
-# 前置: pip install pyinstaller pynput
+# 前置: pip install -r requirements.txt pyinstaller
 # dmg 采用系统自带 hdiutil 制作（零额外依赖，可完全在 GitHub Actions 中自动完成）
 # 说明: 当前未做签名与公证（见 PRD 风险对策），首次打开需右键→打开，
 #       指引见 docs/first-run.md
@@ -13,6 +13,7 @@ pyinstaller --noconfirm --windowed \
     --name ScriptCue \
     --osx-bundle-identifier com.scriptcue.agent \
     --collect-submodules pynput \
+    --collect-data certifi \
     scriptcue_agent.py
 
 echo "已生成应用包: dist/ScriptCue.app"

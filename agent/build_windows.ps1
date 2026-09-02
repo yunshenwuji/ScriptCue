@@ -17,6 +17,7 @@ if (Test-Path $venvPython) {
 
 & $python -m PyInstaller --noconfirm --onefile --windowed `
     --name ScriptCueAgent `
+    --collect-data certifi `
     scriptcue_agent.py
 
 Write-Host ""
