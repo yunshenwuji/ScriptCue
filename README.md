@@ -83,8 +83,11 @@ python -m agent.cli --server ws://127.0.0.1:8000 --room <房间码> --nickname <
 ## 开发约定
 
 - 通信协议为版本化 JSON 文本协议，见 `docs/protocol.md`，服务端、主控端、被控端三方共用；
-- 协议消息结构常量定义在 `server/server/protocol.py`，被控端维护一份等价副本 `agent/agent/protocol.py`；
+- 协议常量定义在 `server/server/protocol.py`（共享契约的权威定义），被控端在 `agent/agent/protocol.py` 只复制其中的**共享契约**：`PROTO_VERSION`、消息类型、指令类型与 `VALID_COMMANDS`、时钟质量分级、错误码、`HEARTBEAT_INTERVAL_S`。两份文件不是逐字等价副本——各端独有的运行限制常量（服务端的房间与回执限制、被控端的重连退避与时钟同步参数）不在同步范围内，只存在于自己那一份；
+- 改动共享契约的责任链：同一笔改动里必须同时更新 `docs/protocol.md`、`server/server/protocol.py` 与 `agent/agent/protocol.py`，并递增 `PROTO_VERSION`；由提交这笔改动的人负责确认三者一致，做法是逐字比对上面列出的共享契约常量。只改某一端独有的运行限制常量时，不递增 `PROTO_VERSION`，也不需要同步另一端。这条责任链目前只靠人工执行，仓库里还没有机械检查兜底；
+- 另有两处跨端耦合但不要求逐字一致：`DEFAULT_LEAD_MS` 以服务端为权威默认值（可用环境变量 `SC_DEFAULT_LEAD_MS` 覆盖）并经 `agent.joined` 下发，被控端那份只是本地兜底值、不参与触发时刻计算；服务端的 `AGENT_OFFLINE_S` 取值是被控端 `HEARTBEAT_INTERVAL_S` 的 3 倍，改心跳间隔时必须一并调整服务端阈值与 `docs/protocol.md`；
 - 服务端与被控端可独立部署，互不依赖对方的代码包。
+- 改动被控端核心链路（时钟偏移换算、绝对时刻调度、取消与触发回执）前后，都要跑一次聚焦检查：在仓库根目录执行 `python -m unittest discover -s agent/tests -t agent -v`（需先按上面的快速开始安装 `agent/requirements.txt`；Windows 下若未激活虚拟环境，把 `python` 换成 `.venv\Scripts\python.exe`）。检查用标准库 unittest 编写、位于 `agent/tests/`，不引入额外依赖，运行时不连网也不注入真实按键；这是当前项目唯一的机械验证入口，新增被控端行为时请在此处补充用例。
 
 ## 版本发布与下载
 

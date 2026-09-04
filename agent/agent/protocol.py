@@ -1,7 +1,24 @@
 """ScriptCue 通信协议常量（被控端副本）。
 
-服务端权威定义见 server/server/protocol.py，文档见 docs/protocol.md。
-两份副本必须保持一致；修改协议时同时更新并递增 PROTO_VERSION。
+服务端权威定义见 server/server/protocol.py，消息定义见 docs/protocol.md。
+本文件只复制服务端的「共享契约」部分，不是逐字等价副本；被控端独有的运行参数
+只存在于本文件，服务端那份没有。
+
+共享契约（两端必须逐字一致，改动时递增 PROTO_VERSION）：
+    PROTO_VERSION；消息类型；指令类型与 VALID_COMMANDS；时钟质量分级 QUALITY_*；
+    错误码 ERR_*；HEARTBEAT_INTERVAL_S。
+
+被控端独有（不在同步范围内，改动不递增 PROTO_VERSION）：
+    RECONNECT_BACKOFF_S、RECONNECT_BACKOFF_MAX_S、DENSE_SYNC_SAMPLES、
+    DENSE_SYNC_INTERVAL_MS、MAINTAIN_SYNC_INTERVAL_S、SPIN_THRESHOLD_MS。
+
+跨端耦合但不要求逐字一致：
+    DEFAULT_LEAD_MS——权威默认值在服务端（可由 SC_DEFAULT_LEAD_MS 覆盖），
+        加入房间时经 agent.joined 下发；本文件里这一份只是本地兜底值，
+        故意不读该环境变量，理由见该常量处注释。
+
+改动共享契约的责任链见 README「开发约定」：同一笔改动里同时更新 docs/protocol.md
+与两端副本、递增 PROTO_VERSION，并由提交者逐字比对确认三者一致。
 """
 
 PROTO_VERSION = 1
@@ -62,10 +79,19 @@ ERR_BAD_COMMAND = "bad_command"
 ERR_NO_SUCH_AGENT = "no_such_agent"
 ERR_BAD_MESSAGE = "bad_message"
 
-# ---- 限制（与服务端一致） ----
+# ---- 本地兜底值（非共享契约） ----
+# 权威默认提前量在服务端（可由 SC_DEFAULT_LEAD_MS 覆盖），加入房间时经 agent.joined
+# 下发并覆盖 AgentEngine.lead_ms。本常量只用于引擎构造时初始化该属性；实际触发时刻
+# 完全由服务端在 command.exec 中下发的绝对时刻 at 决定，不参与本地计算，因此这里的
+# 取值与服务端默认值不同并不会影响同步精度。
+# 之所以不让被控端也读 SC_DEFAULT_LEAD_MS：被控端是面向口述员的 PyInstaller 单文件
+# 应用，给它加一个终端用户永远不会设置的环境变量只会扩大配置面；且 README 约定服务端
+# 与被控端可独立部署、互不依赖对方的代码包，共用一个服务端专属环境变量名会引入隐式耦合。
 DEFAULT_LEAD_MS = 3000
 
 # ---- 心跳 ----
+# HEARTBEAT_INTERVAL_S 属共享契约，与服务端副本逐字一致；服务端的离线判定阈值
+# AGENT_OFFLINE_S 取它的 3 倍，改这里必须同步改服务端副本与 docs/protocol.md。
 HEARTBEAT_INTERVAL_S = 5
 
 # ---- 被控端重连（指数退避，上限 10s） ----
