@@ -15,6 +15,7 @@
 import asyncio
 import contextlib
 import json
+import logging
 import os
 import queue
 import subprocess
@@ -27,7 +28,10 @@ from tkinter import messagebox, ttk
 from . import protocol as p
 from .engine import AgentEngine
 from .keysender import KeySender
+from .logsetup import setup_logging
 from .timeutil import now_ms
+
+logger = logging.getLogger("scriptcue.agent")
 
 APP_NAME = "述播 ScriptCue 被控端"
 POLL_MS = 60          # UI 轮询引擎事件的间隔
@@ -132,6 +136,7 @@ def make_beep_fn():
 
 class GuiApp:
     def __init__(self):
+        self.log_path = setup_logging()
         self.cfg = load_config()
         self.event_queue: queue.Queue = queue.Queue()
         self.engine: AgentEngine | None = None
@@ -243,7 +248,8 @@ class GuiApp:
         self.var_topmost = tk.BooleanVar(value=self.cfg.get("topmost", False))
         ttk.Checkbutton(frm_tools, text="窗口置顶", variable=self.var_topmost,
                         command=self._toggle_topmost).pack(side="left")
-        ttk.Button(frm_tools, text="紧凑小面板", command=self._open_panel).pack(side="right")
+        ttk.Button(frm_tools, text="打开日志", command=self._open_log).pack(side="right")
+        ttk.Button(frm_tools, text="紧凑小面板", command=self._open_panel).pack(side="right", padx=(0, 6))
         self._toggle_topmost()
 
         self.root.after(POLL_MS, self._poll_events)
@@ -495,9 +501,32 @@ class GuiApp:
         if self.panel is not None and self.panel.winfo_exists():
             self.panel_count.configure(text=text)
 
+    # ---------------- 日志导出 ----------------
+
+    def _open_log(self):
+        """在系统文件管理器中定位日志文件，方便用户发给开发者。"""
+        path = self.log_path
+        try:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            if sys.platform == "win32":
+                if path.exists():
+                    subprocess.Popen(["explorer", "/select,", str(path)])
+                else:
+                    os.startfile(str(path.parent))  # noqa: S606
+            elif sys.platform == "darwin":
+                if path.exists():
+                    subprocess.Popen(["open", "-R", str(path)])
+                else:
+                    subprocess.Popen(["open", str(path.parent)])
+            else:
+                subprocess.Popen(["xdg-open", str(path.parent)])
+        except OSError as exc:
+            messagebox.showerror(APP_NAME, f"无法打开日志目录：\n{exc}\n\n日志路径：{path}")
+
     # ---------------- 生命周期 ----------------
 
     def _on_close(self):
+        logger.info("用户关闭窗口，退出")
         if self.engine:
             self.engine.disconnect()
         self.root.destroy()
@@ -525,8 +554,10 @@ class GuiApp:
         sender = KeySender()
         ok, message = sender.check()
         if not ok:
+            logger.error("开机自检失败: %s", message)
             messagebox.showerror(APP_NAME, f"开机自检失败：\n{message}")
         else:
+            logger.info("按键自检: %s", message)
             self._log(message)
 
 

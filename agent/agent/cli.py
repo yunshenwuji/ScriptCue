@@ -15,12 +15,16 @@
 
 import argparse
 import asyncio
+import logging
 import sys
 import threading
 
 from .engine import AgentEngine
 from .keysender import KeySender
+from .logsetup import setup_logging
 from .timeutil import now_ms
+
+logger = logging.getLogger("scriptcue.agent")
 
 
 def _ts() -> str:
@@ -112,10 +116,16 @@ def main(argv=None) -> int:
     parser.add_argument("--dry-run", action="store_true", help="演练模式：不实际注入按键")
     args = parser.parse_args(argv)
 
+    log_path = setup_logging()
+    print(f"[{_ts()}] 日志文件: {log_path}")
+
     key_sender = KeySender(dry_run=args.dry_run)
     ok, message = key_sender.check()
     print(f"[{_ts()}] 按键自检: {message}")
-    if not ok:
+    if ok:
+        logger.info("按键自检: %s", message)
+    else:
+        logger.error("按键自检失败: %s", message)
         return 1
 
     stop = threading.Event()
@@ -131,6 +141,7 @@ def main(argv=None) -> int:
         asyncio.run(engine.run())
     except KeyboardInterrupt:
         print(f"\n[{_ts()}] 已退出")
+    logger.info("被控端退出")
     return 0
 
 

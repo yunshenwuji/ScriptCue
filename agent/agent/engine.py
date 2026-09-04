@@ -96,6 +96,7 @@ class AgentEngine:
     def set_compensation(self, ms: int) -> None:
         """本地修改补偿值（R-05）：本地立即生效并上报服务器。"""
         self.compensation_ms = ms
+        logger.info("补偿值更新为 %sms（本地）", ms)
         self._send_threadsafe({"type": p.AGENT_SET_COMP, "compensation_ms": ms})
 
     def stop(self) -> None:
@@ -130,6 +131,7 @@ class AgentEngine:
 
     async def run(self) -> None:
         """主循环：连接 → 会话 → 断线后指数退避重连（R-07）。"""
+        self._log_startup()
         attempt = 0
         while not self._stopped:
             try:
@@ -154,6 +156,9 @@ class AgentEngine:
     async def _connect_and_serve(self) -> None:
         # 仅 wss:// 需要 SSL 上下文；ws:// 传 None（给明文连接传 ctx 会被 websockets 拒绝）
         ssl_ctx = _build_ssl_context() if self.server_url.startswith("wss://") else None
+        if ssl_ctx is not None:
+            logger.info("SSL: certifi CA 包%s",
+                        "已加载" if certifi is not None else "不可用（仅系统证书库）")
         async with websockets.connect(self.server_url, ssl=ssl_ctx, open_timeout=10,
                                       ping_interval=10, ping_timeout=20) as ws:
             self._ws = ws
@@ -398,6 +403,8 @@ class AgentEngine:
                     self.key_sender.press_space()
                 except Exception as exc:
                     status, detail = "error", str(exc)
+                    logger.error("按键注入失败 #%s: %s", command_id[:8], exc,
+                                 exc_info=True)
 
             fired_at = round(actual_local + offset)  # 换算为服务器时钟（R-04）
             receipt = {"type": p.CMD_RECEIPT, "command_id": command_id,
@@ -413,8 +420,58 @@ class AgentEngine:
 
     # ------------------------------------------------------------------
 
+    def _log_startup(self) -> None:
+        """记录启动信息（版本、OS、Python 版本、启动参数），供日志诊断用。"""
+        import platform
+        import sys
+        logger.info("==== 被控端启动 proto=v%s os=%s python=%s ====",
+                    p.PROTO_VERSION,
+                    f"{platform.system()} {platform.release()}",
+                    sys.version.split()[0])
+        logger.info("启动参数: server=%s room=%s nickname=%s auto_create=%s",
+                    self.server_url, self.room_code, self.nickname, self._auto_create)
+
     def _emit(self, event: dict) -> None:
+        self._log_event(event)
         try:
             self.on_event(event)
         except Exception:
             logger.exception("on_event 回调异常")
+
+    def _log_event(self, evt: dict) -> None:
+        """把引擎事件以人可读文本写入日志文件（不含口令等敏感信息）。"""
+        event = evt.get("event")
+        if event == "connecting":
+            logger.info("正在连接 %s ...", evt.get("url"))
+        elif event == "connected":
+            logger.info("已加入房间 %s，server_time=%s",
+                        evt.get("room_code"), evt.get("server_time"))
+        elif event == "disconnected":
+            logger.info("连接已断开")
+        elif event == "reconnecting":
+            logger.info("%s 秒后重连...", evt.get("delay_s"))
+        elif event == "error":
+            logger.error("错误: code=%s message=%s", evt.get("code"), evt.get("message"))
+        elif event == "clock_sample":
+            logger.debug("时钟采样 #%s: 偏移=%sms RTT=%sms 质量=%s",
+                         evt.get("samples"), evt.get("offset_ms"),
+                         evt.get("rtt_ms"), evt.get("quality"))
+        elif event == "command_scheduled":
+            logger.info("收到指令 [%s] #%s 将于 %sms 后触发 "
+                        "(at=%s 偏移=%sms 补偿=%sms)",
+                        evt.get("command"), str(evt.get("command_id"))[:8],
+                        evt.get("remaining_ms"), evt.get("at"),
+                        evt.get("offset_ms"), evt.get("compensation_ms"))
+        elif event == "command_fired":
+            logger.info("已触发 [%s] #%s 偏差=%sms 状态=%s",
+                        evt.get("command"), str(evt.get("command_id"))[:8],
+                        evt.get("delta_ms"), evt.get("status"))
+        elif event == "command_cancelled":
+            logger.info("指令已取消 #%s", str(evt.get("command_id"))[:8])
+        elif event == "fire_skipped":
+            logger.warning("触发跳过 #%s: %s",
+                           str(evt.get("command_id"))[:8], evt.get("reason"))
+        elif event == "comp_changed":
+            logger.info("补偿值更新为 %sms（来自主控端）", evt.get("compensation_ms"))
+        else:
+            logger.debug("事件: %s", evt)
