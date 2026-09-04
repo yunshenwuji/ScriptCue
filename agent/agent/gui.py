@@ -153,8 +153,8 @@ class GuiApp:
         root = tk.Tk()
         self.root = root
         root.title(APP_NAME)
-        root.geometry("400x560")
-        root.minsize(360, 480)
+        root.geometry("400x680")
+        root.minsize(360, 560)
         root.protocol("WM_DELETE_WINDOW", self._on_close)
 
         pad = {"padx": 12, "pady": 4}
@@ -235,22 +235,23 @@ class GuiApp:
         self.spn_comp.pack(side="left", padx=4)
         ttk.Button(frm_comp, text="应用", command=self._apply_comp).pack(side="left")
 
-        # 日志区
-        frm_log = ttk.LabelFrame(root, text="运行日志")
-        frm_log.pack(fill="both", expand=True, **pad)
-        self.txt_log = tk.Text(frm_log, height=5, font=("Consolas", 9),
-                               state="disabled", wrap="word")
-        self.txt_log.pack(fill="both", expand=True, padx=6, pady=6)
-
-        # 底部工具行
+        # 底部工具行：先于日志区以 side="bottom" 打包，保证任何窗口尺寸下恒可见。
+        # 空间不足时由日志区（expand=True）吸收压缩，而不是把最后打包的工具行裁到窗外。
         frm_tools = ttk.Frame(root)
-        frm_tools.pack(fill="x", **pad)
+        frm_tools.pack(side="bottom", fill="x", **pad)
         self.var_topmost = tk.BooleanVar(value=self.cfg.get("topmost", False))
         ttk.Checkbutton(frm_tools, text="窗口置顶", variable=self.var_topmost,
                         command=self._toggle_topmost).pack(side="left")
         ttk.Button(frm_tools, text="打开日志", command=self._open_log).pack(side="right")
         ttk.Button(frm_tools, text="紧凑小面板", command=self._open_panel).pack(side="right", padx=(0, 6))
         self._toggle_topmost()
+
+        # 日志区：填充工具行之上的剩余空间（空间不足时优先被压缩）
+        frm_log = ttk.LabelFrame(root, text="运行日志")
+        frm_log.pack(fill="both", expand=True, **pad)
+        self.txt_log = tk.Text(frm_log, height=5, font=("Consolas", 9),
+                               state="disabled", wrap="word")
+        self.txt_log.pack(fill="both", expand=True, padx=6, pady=6)
 
         self.root.after(POLL_MS, self._poll_events)
 
