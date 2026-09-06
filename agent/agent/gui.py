@@ -40,6 +40,9 @@ UI_FONT = ("Microsoft YaHei UI", 10)
 
 CMD_TEXT = {p.CMD_PLAY: "起播", p.CMD_PAUSE: "暂停", p.CMD_TEST: "测试"}
 
+COLOR_READY = "#1a9e55"      # 「我已就绪」未就绪态底色（绿）
+COLOR_READY_ON = "#8a93a6"   # 「我已就绪」已就绪态底色（灰）
+
 # 服务器线路预设：口述员只需选择线路名，无需感知真实地址（低门槛）
 SERVER_PRESETS = {
     "线路1（默认）": "https://sb.kadaiad.fun:4680",
@@ -128,6 +131,148 @@ def make_beep_fn():
                 pass
         return beep
     return None
+
+
+# ---------------------------------------------------------------------------
+# 跨平台扁平按钮（tk.Label 自绘）
+# ---------------------------------------------------------------------------
+
+def _shade(hex_color: str, factor: float) -> str:
+    """将 #rrggbb 颜色按 factor（0~1）向黑色加深：0 为原色，1 为纯黑。"""
+    if (not isinstance(hex_color, str) or not hex_color.startswith("#")
+            or len(hex_color) != 7):
+        return hex_color
+    try:
+        rgb = [int(hex_color[i:i + 2], 16) for i in (1, 3, 5)]
+    except ValueError:
+        return hex_color
+    return "#%02x%02x%02x" % tuple(max(0, round(v * (1.0 - factor))) for v in rgb)
+
+
+def _look_color(base: str, hovered: bool, pressed: bool) -> str:
+    """交互状态的底色派生：按压最深，其次悬停，平时用基准色。"""
+    if pressed:
+        return _shade(base, 0.20)
+    if hovered:
+        return _shade(base, 0.08)
+    return base
+
+
+class _ReadyButton(tk.Label):
+    """"我已就绪"按钮：以 tk.Label 自绘，两平台的颜色与交互保持一致。
+
+    背景：经典 tk.Button 在 macOS Aqua 上由系统原生绘制接管，
+    -background 与 -relief 被忽略（Tk button(n) 平台说明），于是
+    bg 不生效而 fg="white" 照常渲染，深浅模式下都是白底白字。
+    tk.Label 由 Tk 自绘，颜色全平台可控。
+
+    交互逐项对齐原生 tk.Button 的默认绑定（Tk library/button.tcl）：
+    - takefocus 参与 Tab 遍历；焦点环在聚焦时用 highlightcolor、
+      非聚焦时用 highlightbackground（与底色同色即隐形）自动切换，
+      highlightthickness 恒占位，聚焦前后布局不跳动
+    - <space>：按下呈现按压外观并立即触发，松开恢复
+    - <Return>：直接触发
+    - 鼠标：按下标记 armed，拖出撤销、拖回恢复，armed 时松开才触发
+    - 点击获得键盘焦点，与原生按钮一致
+    """
+
+    FOCUS_WIDTH = 2  # 焦点环宽度：恒定占位，聚焦/失焦时布局不跳动
+
+    def __init__(self, master, command, **kw):
+        super().__init__(master, **kw)
+        self._command = command
+        self._base = self.cget("bg")
+        self._hovered = False
+        self._pressed = False
+        self._armed = False
+        self.configure(
+            anchor="center", takefocus=True, cursor="hand2",
+            highlightthickness=self.FOCUS_WIDTH,
+            highlightbackground=self._base,
+            highlightcolor=_shade(self._base, 0.4))
+        self.bind("<Enter>", self._on_enter)
+        self.bind("<Leave>", self._on_leave)
+        self.bind("<Button-1>", self._on_down)
+        self.bind("<B1-Enter>", self._on_b1_enter)
+        self.bind("<B1-Leave>", self._on_b1_leave)
+        self.bind("<ButtonRelease-1>", self._on_up)
+        self.bind("<space>", self._on_space)
+        self.bind("<KeyRelease-space>", self._on_key_release)
+        self.bind("<Return>", self._on_return)
+
+    # -- 观感：由状态机统一派生，避免多事件源改色互相覆盖 --
+
+    def _refresh_look(self):
+        super().configure(
+            bg=_look_color(self._base, self._hovered, self._pressed),
+            highlightbackground=self._base,
+            highlightcolor=_shade(self._base, 0.4))
+
+    # -- 鼠标 --
+
+    def _on_down(self, _event):
+        self.focus_set()
+        self._pressed = True
+        self._armed = True
+        self._refresh_look()
+
+    def _on_b1_enter(self, _event):
+        self._armed = True
+        self._pressed = True
+        self._refresh_look()
+
+    def _on_b1_leave(self, _event):
+        self._armed = False
+        self._pressed = False
+        self._refresh_look()
+
+    def _on_up(self, _event):
+        armed = self._armed
+        self._armed = False
+        self._pressed = False
+        self._refresh_look()
+        if armed:
+            self.invoke()
+
+    def _on_enter(self, _event):
+        self._hovered = True
+        self._refresh_look()
+
+    def _on_leave(self, _event):
+        self._hovered = False
+        self._refresh_look()
+
+    # -- 键盘（对齐 button.tcl：<space> 按下即触发并保持按压外观）--
+
+    def _on_space(self, _event):
+        self._pressed = True
+        self._refresh_look()
+        self.invoke()
+
+    def _on_key_release(self, _event):
+        self._pressed = False
+        self._refresh_look()
+
+    def _on_return(self, _event):
+        self.invoke()
+
+    # -- 对外 API：保持 tk.Button 的调用习惯（configure/cget/invoke）--
+
+    def invoke(self):
+        if self._command:
+            return self._command()
+
+    def configure(self, cnf=None, **kw):
+        if cnf:
+            kw.update(cnf)
+        for key in ("bg", "background"):
+            if key in kw:
+                self._base = kw.pop(key)
+        result = super().configure(**kw) if kw else None
+        self._refresh_look()
+        return result
+
+    config = configure
 
 
 # ---------------------------------------------------------------------------
@@ -221,9 +366,10 @@ class GuiApp:
         frm_ready = ttk.Frame(root)
         frm_ready.pack(fill="x", **pad)
         self.var_ready = tk.BooleanVar(value=False)
-        self.btn_ready = tk.Button(frm_ready, text="我已就绪", font=("Microsoft YaHei UI", 14, "bold"),
-                                   bg="#1a9e55", fg="white", relief="flat",
-                                   command=self._toggle_ready)
+        self.btn_ready = _ReadyButton(
+            frm_ready, command=self._toggle_ready, text="我已就绪",
+            font=("Microsoft YaHei UI", 14, "bold"),
+            bg=COLOR_READY, fg="white")
         self.btn_ready.pack(fill="x", ipady=8)
 
         frm_comp = ttk.Frame(root)
@@ -338,7 +484,7 @@ class GuiApp:
         self.engine.set_ready(new)
         self.btn_ready.configure(
             text="已就绪（点击取消）" if new else "我已就绪",
-            bg="#8a93a6" if new else "#1a9e55")
+            bg=COLOR_READY_ON if new else COLOR_READY)
         self._update_panel()
 
     def _apply_comp(self):
