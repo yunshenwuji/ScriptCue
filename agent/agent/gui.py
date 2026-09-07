@@ -682,21 +682,56 @@ class GuiApp:
         self._startup_check()
         self.root.mainloop()
 
+    def _macos_accessibility_gate(self):
+        """辅助功能权限引导（R-10）。
+
+        未授权时先向系统发起正式申请（系统弹原生申请框，并自动把当前二进制
+        登记进辅助功能列表），再打开设置页。若仍不通过——典型场景是从 ad-hoc
+        旧版本升级：列表残留旧身份条目且显示已勾选，但其代码签名要求对新
+        二进制无效——则清除本应用旧授权记录后重新申请，解除"已勾选却反复
+        要求授权"的死锁。
+        """
+        from . import keysender as ks
+        try:
+            trusted = ks.accessibility_trusted()
+        except ks.AccessibilityCheckError as exc:
+            # 检测能力异常不得伪装成"未授权"（否则死循环），放行交给后续自检兜底
+            logger.error("辅助功能权限检测不可用: %s", exc)
+            messagebox.showerror(
+                APP_NAME,
+                f"无法检测辅助功能权限状态：\n{exc}\n\n"
+                "程序将继续启动；若之后模拟按键无效，请到\n"
+                "系统设置 → 隐私与安全性 → 辅助功能 手动授权后重启本程序。")
+            return
+        if trusted:
+            return
+        ks.request_accessibility_permission()
+        ks.open_accessibility_settings()
+        reset_done = False
+        while not ks.accessibility_trusted():
+            retry = messagebox.askretrycancel(
+                APP_NAME,
+                "述播需要「辅助功能」权限才能模拟按键。\n\n"
+                "点击「重试」将重新发起系统申请并打开设置页面：\n"
+                "隐私与安全性 → 辅助功能。\n\n"
+                "• 列表中没有 ScriptCue：打开登记条目的开关即可；\n"
+                "• 列表中已有 ScriptCue 且开关已打开却仍提示：\n"
+                "  属旧版本残留记录，程序将自动清除并重新登记，\n"
+                "  请在条目重新出现（开关为关）后再次打开。\n"
+                "（授权后如仍未通过，请重启本程序）")
+            if not retry:
+                self.root.destroy()
+                sys.exit(1)
+            if not reset_done:
+                ks.reset_accessibility_entry()  # 仅清除一次，避免误删用户刚手动添加的条目
+                reset_done = True
+            ks.request_accessibility_permission()
+            ks.open_accessibility_settings()
+
     def _startup_check(self):
         """开机自检（R-11）与 macOS 权限引导（R-10）。"""
         if sys.platform == "darwin":
-            from .keysender import accessibility_trusted, open_accessibility_settings
-            while not accessibility_trusted():
-                retry = messagebox.askretrycancel(
-                    APP_NAME,
-                    "述播需要「辅助功能」权限才能模拟按键。\n\n"
-                    "点击「重试」将打开系统设置的对应页面：\n"
-                    "隐私与安全性 → 辅助功能 → 勾选本程序。\n"
-                    "（授权后可能需要重新启动本程序）")
-                if not retry:
-                    self.root.destroy()
-                    sys.exit(1)
-                open_accessibility_settings()
+            self._macos_accessibility_gate()
 
         sender = KeySender()
         ok, message = sender.check()
