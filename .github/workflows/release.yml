@@ -69,6 +69,7 @@ jobs:
         env:
           MACOS_SIGNING_P12_B64: ${{ secrets.MACOS_SIGNING_P12_B64 }}
           MACOS_SIGNING_PASSWORD: ${{ secrets.MACOS_SIGNING_PASSWORD }}
+          MACOS_SIGNING_IDENTITY: ${{ secrets.MACOS_SIGNING_IDENTITY }}
         run: |
           if [ -z "$MACOS_SIGNING_P12_B64" ]; then
             echo "未配置 MACOS_SIGNING_P12_B64，跳过证书导入（产物保留 ad-hoc 签名）"
@@ -77,11 +78,24 @@ jobs:
           python3 -c "import base64, os; open(os.environ['RUNNER_TEMP'] + '/signing.p12', 'wb').write(base64.b64decode(os.environ['MACOS_SIGNING_P12_B64']))"
           security create-keychain -p "scriptcue-runner" "$RUNNER_TEMP/build.keychain"
           security set-keychain-settings -lut 21600 "$RUNNER_TEMP/build.keychain"
+          # 已知良性现象（macOS 15/26 runner）：import 过程打印
+          # "SecKeychainItemSetExtendedAttribute" 警告，且即使已成功导入
+          # （"1 identity imported."）也可能返回非零退出码。故不以 import
+          # 退出码为准，改用 find-identity 做权威校验——真实失败（密码错、
+          # p12 损坏）会被校验捕获并以明确错误终止。
           security import "$RUNNER_TEMP/signing.p12" -P "$MACOS_SIGNING_PASSWORD" \
-            -a -t agg -k "$RUNNER_TEMP/build.keychain" -T /usr/bin/codesign
+            -a -t agg -k "$RUNNER_TEMP/build.keychain" -T /usr/bin/codesign \
+            || echo "::warning::security import 返回非零退出码（若上方已打印 'identity imported'，属已知良性现象）"
+          identities=$(security find-identity "$RUNNER_TEMP/build.keychain") || true
+          echo "$identities"
+          echo "$identities" | grep -qF "$MACOS_SIGNING_IDENTITY" \
+            || { echo "::error::证书导入校验失败：未找到身份「$MACOS_SIGNING_IDENTITY」，请核对 p12/密码/身份名三个 Secrets"; exit 1; }
           security list-keychain -d user -s "$RUNNER_TEMP/build.keychain" login.keychain-db
+          # 部分 runner 镜像上此命令会因系统限制返回非零；import 的 -T 已授权
+          # codesign 访问私钥，若真失败会在打包步骤的 codesign 报错中体现
           security set-key-partition-list -S apple-tool:,apple: -s \
-            -k "scriptcue-runner" "$RUNNER_TEMP/build.keychain"
+            -k "scriptcue-runner" "$RUNNER_TEMP/build.keychain" \
+            || echo "::warning::set-key-partition-list 返回非零退出码，若后续 codesign 报私钥访问错误需回查此步"
 
       - name: 打包 macOS ${{ matrix.arch }}（.app + 拖拽安装 .dmg）
         working-directory: agent
