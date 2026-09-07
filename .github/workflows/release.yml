@@ -60,8 +60,33 @@ jobs:
       - name: 安装依赖
         run: pip install -r agent/requirements.txt pyinstaller
 
+      # 自签代码签名证书导入（可选）：未配置 Secrets 时跳过，产物保留 ad-hoc 签名。
+      # 稳定签名身份使 TCC"辅助功能"授权跨版本保留（详见 agent/build_macos.sh 签名段）。
+      # 需配置 Secrets：MACOS_SIGNING_P12_B64（p12 证书的 base64）、
+      #   MACOS_SIGNING_PASSWORD（p12 导出密码）、MACOS_SIGNING_IDENTITY（证书名称）。
+      # keychain 密码为 runner 临时钥匙串专用，仅存活于本次构建，无需保密。
+      - name: 导入自签签名证书
+        env:
+          MACOS_SIGNING_P12_B64: ${{ secrets.MACOS_SIGNING_P12_B64 }}
+          MACOS_SIGNING_PASSWORD: ${{ secrets.MACOS_SIGNING_PASSWORD }}
+        run: |
+          if [ -z "$MACOS_SIGNING_P12_B64" ]; then
+            echo "未配置 MACOS_SIGNING_P12_B64，跳过证书导入（产物保留 ad-hoc 签名）"
+            exit 0
+          fi
+          python3 -c "import base64, os; open(os.environ['RUNNER_TEMP'] + '/signing.p12', 'wb').write(base64.b64decode(os.environ['MACOS_SIGNING_P12_B64']))"
+          security create-keychain -p "scriptcue-runner" "$RUNNER_TEMP/build.keychain"
+          security set-keychain-settings -lut 21600 "$RUNNER_TEMP/build.keychain"
+          security import "$RUNNER_TEMP/signing.p12" -P "$MACOS_SIGNING_PASSWORD" \
+            -a -t agg -k "$RUNNER_TEMP/build.keychain" -T /usr/bin/codesign
+          security list-keychain -d user -s "$RUNNER_TEMP/build.keychain" login.keychain-db
+          security set-key-partition-list -S apple-tool:,apple: -s \
+            -k "scriptcue-runner" "$RUNNER_TEMP/build.keychain"
+
       - name: 打包 macOS ${{ matrix.arch }}（.app + 拖拽安装 .dmg）
         working-directory: agent
+        env:
+          MACOS_SIGNING_IDENTITY: ${{ secrets.MACOS_SIGNING_IDENTITY }}
         run: bash build_macos.sh
 
       - uses: actions/upload-artifact@v7
