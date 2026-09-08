@@ -110,7 +110,22 @@ elif sys.platform == "darwin":
     except OSError:  # pragma: no cover
         _appservices = None
 
-    # 发起申请需用 CoreFoundation 构造 {kAXTrustedCheckOptionPrompt: True} 字典
+    # 发起申请需用 CoreFoundation 构造 {kAXTrustedCheckOptionPrompt: True} 字典。
+    # 回调必须绑定 kCFType 系列真实回调结构：系统 API 内部以标准 CFString 语义
+    # （hash+内容比较）查询键并断言取出的值类型，裸指针语义（NULL 回调）会让
+    # 查询落空、系统对取出的 NULL 值调用 CFGetTypeID 时段错误闪退。
+    class _CFDictCallBacks(ctypes.Structure):
+        """CFDictionaryKeyCallBacks / CFDictionaryValueCallBacks（两者字段布局一致）。"""
+
+        _fields_ = [
+            ("version", ctypes.c_long),
+            ("retain", ctypes.c_void_p),
+            ("release", ctypes.c_void_p),
+            ("copyDescription", ctypes.c_void_p),
+            ("equal", ctypes.c_void_p),
+            ("hash", ctypes.c_void_p),
+        ]
+
     _corefoundation = None
     try:
         _cf_path = ctypes.util.find_library("CoreFoundation")
@@ -121,7 +136,8 @@ elif sys.platform == "darwin":
                 ctypes.c_void_p, ctypes.c_char_p, ctypes.c_uint32]
             _corefoundation.CFDictionaryCreateMutable.restype = ctypes.c_void_p
             _corefoundation.CFDictionaryCreateMutable.argtypes = [
-                ctypes.c_void_p, ctypes.c_long, ctypes.c_void_p, ctypes.c_void_p]
+                ctypes.c_void_p, ctypes.c_long,
+                ctypes.POINTER(_CFDictCallBacks), ctypes.POINTER(_CFDictCallBacks)]
             _corefoundation.CFDictionarySetValue.restype = None
             _corefoundation.CFDictionarySetValue.argtypes = [
                 ctypes.c_void_p, ctypes.c_void_p, ctypes.c_void_p]
@@ -138,16 +154,21 @@ elif sys.platform == "darwin":
     def _prompt_options() -> tuple[int, int]:
         """构造 {kAXTrustedCheckOptionPrompt: True} 的 CFDictionary 引用。
 
-        返回 (字典引用, 键字符串引用)，按 CF"Create"规则由调用方 CFRelease。
-        键值回调传 NULL：字典按裸指针存取键值，生命周期仅覆盖本次调用，
-        无需 CFType 的 retain/release 语义。
+        键值回调绑定 CoreFoundation 导出的 kCFTypeDictionary*CallBacks 全局
+        结构，保证系统 API 以标准 CF 语义查询键时能够命中。返回
+        (字典引用, 键字符串引用)，按 CF"Create"规则由调用方 CFRelease。
         """
         # kCFStringEncodingUTF8
         key = _corefoundation.CFStringCreateWithCString(
             None, b"AXTrustedCheckOptionPrompt", 0x08000100)
         # kCFBooleanTrue 是 CoreFoundation 导出的常量 CFBooleanRef（Get 规则，无需释放）
         true_val = ctypes.c_void_p.in_dll(_corefoundation, "kCFBooleanTrue")
-        options = _corefoundation.CFDictionaryCreateMutable(None, 1, None, None)
+        key_cb = _CFDictCallBacks.in_dll(
+            _corefoundation, "kCFTypeDictionaryKeyCallBacks")
+        value_cb = _CFDictCallBacks.in_dll(
+            _corefoundation, "kCFTypeDictionaryValueCallBacks")
+        options = _corefoundation.CFDictionaryCreateMutable(
+            None, 1, ctypes.byref(key_cb), ctypes.byref(value_cb))
         _corefoundation.CFDictionarySetValue(options, key, true_val)
         return options, key
 
@@ -174,6 +195,8 @@ elif sys.platform == "darwin":
         if _corefoundation is None:  # pragma: no cover - 极端环境降级为静默检测
             return bool(_appservices.AXIsProcessTrusted())
         options, key = _prompt_options()
+        if not options:  # pragma: no cover - 字典创建失败的极端环境防御：宁可少弹窗不闪退
+            return bool(_appservices.AXIsProcessTrusted())
         trusted = bool(_appservices.AXIsProcessTrustedWithOptions(options))
         # 申请为同步调用，返回后系统不再引用两个对象，按 Create 规则释放
         _corefoundation.CFRelease(options)
