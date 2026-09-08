@@ -690,8 +690,19 @@ class GuiApp:
         旧版本升级：列表残留旧身份条目且显示已勾选，但其代码签名要求对新
         二进制无效——则清除本应用旧授权记录后重新申请，解除"已勾选却反复
         要求授权"的死锁。
+
+        引导路径上的系统交互调用全部经 _safe 兜底：任何异常只降级为日志
+        记录，绝不允许把启动流程变成闪退。
         """
         from . import keysender as ks
+
+        def _safe(name, func, *args):
+            try:
+                return func(*args)
+            except Exception:  # noqa: BLE001 - 启动引导路径的兜底防御
+                logger.exception("辅助功能引导步骤「%s」执行失败", name)
+                return None
+
         try:
             trusted = ks.accessibility_trusted()
         except ks.AccessibilityCheckError as exc:
@@ -705,10 +716,10 @@ class GuiApp:
             return
         if trusted:
             return
-        ks.request_accessibility_permission()
-        ks.open_accessibility_settings()
+        _safe("发起权限申请", ks.request_accessibility_permission)
+        _safe("打开系统设置", ks.open_accessibility_settings)
         reset_done = False
-        while not ks.accessibility_trusted():
+        while not (_safe("权限状态检测", ks.accessibility_trusted) or False):
             retry = messagebox.askretrycancel(
                 APP_NAME,
                 "述播需要「辅助功能」权限才能模拟按键。\n\n"
@@ -723,10 +734,11 @@ class GuiApp:
                 self.root.destroy()
                 sys.exit(1)
             if not reset_done:
-                ks.reset_accessibility_entry()  # 仅清除一次，避免误删用户刚手动添加的条目
+                # 仅清除一次，避免误删用户刚手动添加的条目
+                _safe("清除旧授权记录", ks.reset_accessibility_entry)
                 reset_done = True
-            ks.request_accessibility_permission()
-            ks.open_accessibility_settings()
+            _safe("发起权限申请", ks.request_accessibility_permission)
+            _safe("打开系统设置", ks.open_accessibility_settings)
 
     def _startup_check(self):
         """开机自检（R-11）与 macOS 权限引导（R-10）。"""
