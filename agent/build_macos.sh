@@ -14,7 +14,7 @@ set -e
 pyinstaller --noconfirm --windowed \
     --name ScriptCue \
     --osx-bundle-identifier com.scriptcue.agent \
-    --collect-submodules pynput \
+    --collect-submodules Quartz \
     --collect-data certifi \
     scriptcue_agent.py
 

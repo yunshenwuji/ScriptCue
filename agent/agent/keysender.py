@@ -1,7 +1,7 @@
 """按键注入（R-03 / R-10 / R-11）。
 
 - Windows：Win32 SendInput（ctypes 直调，无第三方依赖，系统级快速路径）；
-- macOS：CGEventPost（pynput 封装）。
+- macOS：CGEventPost（pyobjc Quartz 直调，不经 pynput）。
 
 选择原生实现而非高层库的原因：注入延迟最低（1~5ms），且便于做开机自检
 与辅助功能权限的检测、申请与授权记录清理（macOS TCC）。
@@ -83,7 +83,7 @@ if sys.platform == "win32":
 
 
 # ---------------------------------------------------------------------------
-# macOS: CGEventPost（经 pynput）
+# macOS: CGEventPost（pyobjc Quartz 直调）
 # ---------------------------------------------------------------------------
 
 elif sys.platform == "darwin":
@@ -172,9 +172,23 @@ elif sys.platform == "darwin":
         _corefoundation.CFDictionarySetValue(options, key, true_val)
         return options, key
 
+    # 空格键虚拟键码（ANSI keycode 0x31），跨所有键盘布局通用，无需经 TIS/
+    # HIToolbox 构造的 unicode→keycode 映射表。pynput 的 Controller() 在构造时会
+    # 调用 TISCopyCurrentKeyboardInputSource / TISGetInputSourceProperty，而这类输入源
+    # API 在 macOS 26.x 上被强制要求主线程（dispatch_assert_queue(main)）；本函数却在
+    # 后台自旋触发线程执行，会触发断言使进程 SIGTRAP 闪退。直接投递 CGEvent 既绕开
+    # TIS，又因 CGEventPost 线程无关而可安全留在触发线程、不损失亚毫秒触发精度。
+    _VK_SPACE = 0x31
+
     def _send_space() -> None:
-        from pynput.keyboard import Controller, Key
-        Controller().tap(Key.space)
+        from Quartz import (
+            CGEventCreateKeyboardEvent,
+            CGEventPost,
+            kCGHIDEventTap,
+        )
+        for is_press in (True, False):  # 按下 + 抬起，等价 pynput 的一次 tap
+            CGEventPost(kCGHIDEventTap,
+                        CGEventCreateKeyboardEvent(None, _VK_SPACE, is_press))
 
     def accessibility_trusted() -> bool:
         """当前进程是否已获得辅助功能权限。

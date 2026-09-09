@@ -262,7 +262,7 @@
 |---|---|---|
 | 服务器 | Python (FastAPI + websockets) 或 Node.js | 轻量、开发快 |
 | 主控端 | 纯网页（Vue/React 或原生 JS），响应式布局 | 免安装、跨平台，避开 APP 上架审核 |
-| 被控端 | Python + pynput + PyInstaller 打包；界面用 tkinter/PyWebview | 延续已验证的按键方案，跨平台成本最低 |
+| 被控端 | Python + pyobjc(Quartz) + PyInstaller 打包；界面用 tkinter/PyWebview | 延续已验证的按键方案，跨平台成本最低 |
 | 部署 | 单台云主机 + 域名 + SSL 证书 | 成本低，满足规模需求 |
 
 ---

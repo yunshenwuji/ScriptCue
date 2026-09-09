@@ -1,6 +1,6 @@
 websockets>=13
 certifi>=2026.7.22
-pynput>=1.7; sys_platform == "darwin"
+pyobjc-framework-Quartz>=12.2.2; sys_platform == "darwin"
 
 # 打包（仅发布时需要）
 # pyinstaller>=6.0
