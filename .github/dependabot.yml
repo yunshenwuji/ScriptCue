@@ -1,0 +1,53 @@
+# 依赖自动更新：每月初提 PR，由人工审阅后合并。
+# 生效前提：本文件需位于默认分支的 .github/dependabot.yml。
+# 注意：`day` 仅在 interval 为 weekly 时有意义，此处 monthly 故不设置；
+#       `time`/`timezone` 对所有 interval 有效，保留以固定触发时刻。
+version: 2
+updates:
+  # 被控端 Python 依赖（agent/requirements.txt）
+  # 该目录下的依赖升级只改动 requirements 里声明的版本下界，合并后不会
+  # 自动生效——必须重新打包 EXE/DMG 并跑端到端验证（尤其 pyobjc/Quartz
+  # 按键注入与 websockets 跨大版本），建议攒到发版窗口一起处理。
+  - package-ecosystem: "pip"
+    directory: "/agent"
+    schedule:
+      interval: "monthly"
+      time: "09:00"
+      timezone: "Asia/Shanghai"
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: "deps"
+      include: "scope"
+
+  # 服务端 Python 依赖（server/requirements.txt）
+  # 合并后重建/重新拉取 Docker 镜像即生效，风险低于被控端。
+  # 注：uvicorn[standard] 的 extras（httptools/uvloop 等）为传递依赖，
+  #     不在本文件中声明，不在版本更新范围内。
+  - package-ecosystem: "pip"
+    directory: "/server"
+    schedule:
+      interval: "monthly"
+      time: "09:00"
+      timezone: "Asia/Shanghai"
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: "deps"
+      include: "scope"
+
+  # GitHub Actions 工作流更新
+  # directory "/" 会扫描 .github/workflows/ 下全部 uses：
+  #   release.yml（actions/checkout、setup-python、upload-artifact、
+  #   download-artifact、softprops/action-gh-release）与
+  #   docker-hub.yml（actions/checkout、docker/setup-buildx-action、
+  #   login-action、metadata-action、build-push-action）。
+  # 跨大版本合并后需手动触发一次 workflow_dispatch 验证打包链路。
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "monthly"
+      time: "09:00"
+      timezone: "Asia/Shanghai"
+    open-pull-requests-limit: 3
+    commit-message:
+      prefix: "ci"
+      include: "scope"
