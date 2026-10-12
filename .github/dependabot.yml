@@ -2,6 +2,8 @@
 # 生效前提：本文件需位于默认分支的 .github/dependabot.yml。
 # 注意：`day` 仅在 interval 为 weekly 时有意义，此处 monthly 故不设置；
 #       `time`/`timezone` 对所有 interval 有效，保留以固定触发时刻。
+#       两条 pip 条目不设 include: scope——实测 scope 会渲染为 "deps"，
+#       与 prefix 拼成冗余的 `deps(deps):`；且标题本身已带 "in /目录" 信息。
 version: 2
 updates:
   # 被控端 Python 依赖（agent/requirements.txt）
@@ -17,7 +19,6 @@ updates:
     open-pull-requests-limit: 5
     commit-message:
       prefix: "deps"
-      include: "scope"
 
   # 服务端 Python 依赖（server/requirements.txt）
   # 合并后重建/重新拉取 Docker 镜像即生效，风险低于被控端。
@@ -32,7 +33,6 @@ updates:
     open-pull-requests-limit: 5
     commit-message:
       prefix: "deps"
-      include: "scope"
 
   # GitHub Actions 工作流更新
   # directory "/" 会扫描 .github/workflows/ 下全部 uses：
