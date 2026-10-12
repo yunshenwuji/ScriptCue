@@ -1,4 +1,4 @@
-websockets>=13
+websockets>=17.2
 certifi>=2026.7.22
 pyobjc-framework-Quartz>=12.2.2; sys_platform == "darwin"
 
