@@ -160,7 +160,8 @@ jobs:
           path: dist
           merge-multiple: true
 
-      # 对产物逐个做 sha256，产出 .sha256 附件与更新清单（稳定名 + 实名各一份）。
+      # 对产物逐个做 sha256 并写入更新清单；清单只发布稳定名 update-manifest.json
+      # 一份（某版本的历史清单可从对应 Release 附件取）。
       # 清单只含文件名、不含 CDN 绝对地址：下发时由服务端注入 url（见
       # server/server/updatefeed.py 与 docs/auto-update.md）。
       - name: 生成校验和与更新清单
@@ -195,8 +196,6 @@ jobs:
               if not path.is_file():
                   raise SystemExit(f"缺少打包产物: {path}")
               digest = sha256(path)
-              (dist / (name + ".sha256")).write_text(
-                  f"{digest}  {name}\n", encoding="utf-8")
               entry = {"asset": name, "kind": kind,
                        "sha256": digest, "size": path.stat().st_size}
               if is_macos and authority:
@@ -217,8 +216,6 @@ jobs:
           }
           text = json.dumps(manifest, ensure_ascii=False, indent=2) + "\n"
           (dist / "update-manifest.json").write_text(text, encoding="utf-8")
-          (dist / f"update-manifest-{version}.json").write_text(
-              text, encoding="utf-8")
           print(text)
           PY
 

@@ -17,7 +17,7 @@
 └───────────────────┘               └─────────────────┘          ⑤用户点击 → selftest → 替换 → 重启
 ```
 
-- **CI**（release.yml，tag 触发）只产出产物、`.sha256` 与 `update-manifest.json` 作为 Release 附件；
+- **CI**（release.yml，tag 触发）只产出产物与 `update-manifest.json` 作为 Release 附件；
 - **CDN 内容由维护者手动同步**（清单与全部产物；同步方式不在本文档约定范围）；
 - 服务端启动即拉取清单并落盘缓存（`./data/update-cache.json`，与审计日志同目录、同 UID 10001
   权限模型），此后按 `SC_UPDATE_REFRESH_H`（默认 24h）刷新；CDN 不可达时继续用缓存，只记日志；
@@ -52,8 +52,8 @@
 - **`codesign_authority`** 仅 macOS 用：替换前与当前 .app、待装 .app 的签名身份三方比对，
   不一致即拒绝替换（保住 TCC 辅助功能授权的连续性）；任一方为 ad-hoc 时跳过比对；
 - 服务端下发副本额外注入 `server_time`，便于排查时钟问题；
-- 发布两份：稳定名 `update-manifest.json`（自动通道用）+ 实名 `update-manifest-<version>.json`
-  （人工钉版本/审计用）。清单 schema 变更必须同步：本文件、release.yml 清单生成步骤、
+- 只发布稳定名 `update-manifest.json` 一份（自动通道与人工共用；某版本的历史清单可从对应
+  GitHub Release 附件取）。清单 schema 变更必须同步：本文件、release.yml 清单生成步骤、
   两端解析代码（`server/server/updatefeed.py`、`agent/agent/updater.py`）。
 
 ## 3. CDN 目录约定与地址
@@ -63,8 +63,7 @@
 
 | 文件 | 说明 |
 |---|---|
-| `update-manifest.json` | 稳定名清单（服务端拉取对象） |
-| `update-manifest-<version>.json` | 实名清单（钉版本用，可选） |
+| `update-manifest.json` | 更新清单（服务端 `SC_UPDATE_MANIFEST_URL` 拉取对象；每次发版覆盖） |
 | `ScriptCueAgent-windows-x64.exe` | Windows x64 单文件 |
 | `ScriptCueAgent-macos-arm64-update.tar.gz` | macOS Apple Silicon 更新包 |
 | `ScriptCueAgent-macos-x86_64-update.tar.gz` | macOS Intel 更新包 |
@@ -89,7 +88,7 @@
 2. **先部署服务端**（`docker compose pull && docker compose up -d`，确认 `/healthz` 的
    `proto=2`），**再发布被控端**（推送 `v*` tag 触发 Release 构建）——顺序颠倒时新被控端
    会被旧服务端以 `bad_proto` 拒绝；
-3. 从 GitHub Release 下载产物与 `.sha256`，核对校验和；
+3. 从 GitHub Release 下载产物，核对 sha256（Release 页面自动显示各附件摘要，或对照清单中的 sha256）；
 4. 将清单与各平台产物同步到 CDN `/www/ScriptCue-update/`（覆盖稳定名清单）；
 5. 服务端最迟在下一个刷新周期（或重启）后生效；急需立即生效可重启服务端容器，或直接
    GET 一下 `/update/manifest.json` 前后的版本号确认；

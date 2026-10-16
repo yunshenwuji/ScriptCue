@@ -97,7 +97,7 @@ python -m agent.cli --server ws://127.0.0.1:8000 --room <房间码> --nickname <
   - `ScriptCueAgent-windows-x64.exe`（Windows 10+ 64 位单文件）；
   - `ScriptCueAgent-macos-arm64.dmg`（macOS Apple Silicon）与 `ScriptCueAgent-macos-x86_64.dmg`（macOS Intel，拖拽安装镜像）；
   - `ScriptCueAgent-macos-<架构>-update.tar.gz`（应用内自动更新包，免 dmg 挂载）；
-  - 各产物的 `.sha256` 校验和，以及 `update-manifest.json` / `update-manifest-<version>.json` 更新清单。
+  - `update-manifest.json` 更新清单（含各产物的 sha256 与尺寸）。
   也可在 Actions 页面手动运行 **Release** workflow 仅验证打包（产物在运行页下载，此时版本保持 dev、不会进入自动更新通道）；
 - 应用内自动更新的完整链路（CDN 目录约定、服务端环境变量、发版顺序硬约束、回退操作与排障）见 [自动更新设计](docs/auto-update.md)。发版顺序硬约束：**先部署新服务端镜像，再发布 v2 被控端**；清单与产物到 CDN 的同步由维护者手动完成；
 - 服务端 Docker Hub 镜像（`yunshenwuji/scriptcue-server`，amd64）在 Actions 页面手动运行 **Docker Hub** workflow 推送：从 `main` 触发推送 `latest`，从 tag 触发推送对应版本号。需先在仓库 Secrets 配置 `DOCKERHUB_USERNAME` 与 `DOCKERHUB_TOKEN`；
