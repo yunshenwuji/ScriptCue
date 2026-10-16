@@ -12,13 +12,7 @@ run_coroutine_threadsafe 回事件循环发送回执。所有 on_event 回调
 import asyncio
 import json
 import logging
-import ssl
 import threading
-
-try:
-    import certifi
-except ImportError:  # pragma: no cover - certifi 应随依赖一并安装
-    certifi = None
 
 import websockets
 
@@ -27,28 +21,13 @@ from .clocksync import ClockSync
 from .keysender import KeySender
 from .scheduler import precise_wait_until
 from .timeutil import now_ms
+from .tls import build_ssl_context
+from .version import APP_VERSION
 
 logger = logging.getLogger("scriptcue.agent")
 
 # 触发前倒数提示音的起点（R-08）
 BEEP_COUNTDOWN_MS = 3000
-
-
-def _build_ssl_context() -> ssl.SSLContext:
-    """构造 wss:// 连接用的 SSL 上下文：系统证书库 ∪ certifi 根证书（加法）。
-
-    - Windows：create_default_context() 已加载系统证书库，再追加 certifi 只增不减，
-      现有可连的服务器不会退化；
-    - macOS：Python 的 OpenSSL 不读系统钥匙串，系统库常为空，靠 certifi 补齐，
-      否则对任何 wss:// 都会报 "unable to get local issuer certificate"。
-    """
-    ctx = ssl.create_default_context()
-    if certifi is not None:
-        try:
-            ctx.load_verify_locations(certifi.where())
-        except OSError:  # certifi 包缺失/损坏时退回系统库，至少不影响 Windows
-            logger.warning("无法加载 certifi CA 包，仅使用系统证书库")
-    return ctx
 
 
 class AgentEngine:
@@ -155,10 +134,7 @@ class AgentEngine:
 
     async def _connect_and_serve(self) -> None:
         # 仅 wss:// 需要 SSL 上下文；ws:// 传 None（给明文连接传 ctx 会被 websockets 拒绝）
-        ssl_ctx = _build_ssl_context() if self.server_url.startswith("wss://") else None
-        if ssl_ctx is not None:
-            logger.info("SSL: certifi CA 包%s",
-                        "已加载" if certifi is not None else "不可用（仅系统证书库）")
+        ssl_ctx = build_ssl_context() if self.server_url.startswith("wss://") else None
         async with websockets.connect(self.server_url, ssl=ssl_ctx, open_timeout=10,
                                       ping_interval=10, ping_timeout=20) as ws:
             self._ws = ws
@@ -192,6 +168,8 @@ class AgentEngine:
         join_msg = {
             "type": p.AGENT_JOIN, "proto": p.PROTO_VERSION,
             "room_code": self.room_code, "nickname": self.nickname,
+            # 构建版本（v2 起）：服务端据此判断是否有可用更新并推 update.available
+            "build_version": APP_VERSION,
             # 携带本地补偿值：服务器重启后房间重建时用于恢复（否则校准结果丢失）
             "compensation_ms": self.compensation_ms,
         }
@@ -324,6 +302,12 @@ class AgentEngine:
             self.compensation_ms = msg.get("compensation_ms", self.compensation_ms)
             self._emit({"event": "comp_changed",
                         "compensation_ms": self.compensation_ms})
+        elif mtype == p.UPDATE_AVAILABLE:
+            # 服务端主动推送的新版本通知：与本地定时轮询汇入同一套更新处理
+            manifest = msg.get("manifest")
+            if isinstance(manifest, dict):
+                self._emit({"event": "update_available", "source": "server",
+                            "manifest": manifest})
         elif mtype == p.ERROR:
             self._emit({"event": "error", "code": msg.get("code"),
                         "message": msg.get("message")})
@@ -424,8 +408,8 @@ class AgentEngine:
         """记录启动信息（版本、OS、Python 版本、启动参数），供日志诊断用。"""
         import platform
         import sys
-        logger.info("==== 被控端启动 proto=v%s os=%s python=%s ====",
-                    p.PROTO_VERSION,
+        logger.info("==== 被控端启动 v%s proto=v%s os=%s python=%s ====",
+                    APP_VERSION, p.PROTO_VERSION,
                     f"{platform.system()} {platform.release()}",
                     sys.version.split()[0])
         logger.info("启动参数: server=%s room=%s nickname=%s auto_create=%s",

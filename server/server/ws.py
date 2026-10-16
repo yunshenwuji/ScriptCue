@@ -16,6 +16,7 @@ from . import protocol as p
 from .audit import AuditLog
 from .models import Room, RoomFullError, RoomManager
 from .timebase import now_ms
+from .updatefeed import UpdateFeed
 
 logger = logging.getLogger("scriptcue.ws")
 
@@ -212,6 +213,31 @@ async def run_controller_session(ws: WebSocket, manager: RoomManager,
 # 被控端会话
 # ---------------------------------------------------------------------------
 
+async def push_update_if_behind(room: Room, session, feed: UpdateFeed,
+                                audit: AuditLog) -> None:
+    """版本落后且本版本尚未推送过时，下发 update.available。
+
+    - 只推给 proto ≥ 2 的会话：v1 被控端不认识该消息，收到后回 bad_message；
+    - 顺带刷新 session.update_available（供 AgentState 下发主控端）；
+    - 按 latest_version 去重（last_pushed_version），同一版本只推一次。
+    """
+    if session.proto < 2 or not session.online:
+        return
+    behind = feed.is_behind(session.build_version)
+    session.update_available = behind
+    latest = feed.latest_version()
+    if not behind or latest is None or session.last_pushed_version == latest:
+        return
+    manifest = feed.serve()
+    if manifest is None:
+        return
+    if await session.send({"type": p.UPDATE_AVAILABLE, "manifest": manifest}):
+        session.last_pushed_version = latest
+        logger.info("已推送更新通知: %s/%s → v%s", room.code, session.nickname, latest)
+        audit.log("update_pushed", room=room.code, session=session.session_id,
+                  to_version=latest)
+
+
 async def _agent_handle_heartbeat(room: Room, session, msg: dict) -> None:
     session.ready = bool(msg.get("ready"))
     quality = msg.get("clock_quality")
@@ -245,7 +271,8 @@ async def _agent_handle_receipt(room: Room, session, msg: dict, audit: AuditLog)
 
 
 async def run_agent_session(ws: WebSocket, manager: RoomManager,
-                            audit: AuditLog, first: dict) -> None:
+                            audit: AuditLog, first: dict,
+                            feed: UpdateFeed) -> None:
     code = (first.get("room_code") or "").strip().upper()
     token = first.get("token")
     room = manager.get(code)
@@ -286,15 +313,21 @@ async def run_agent_session(ws: WebSocket, manager: RoomManager,
         with contextlib.suppress(Exception):
             await session.ws.close()
     session.bind(ws)
+    # 记录协议与构建版本（v1 客户端不携带 build_version，保持 None 不参与版本比较）
+    session.proto = first.get("proto") or 1
+    build_version = first.get("build_version")
+    session.build_version = build_version if isinstance(build_version, str) else None
     room.touch()
 
     await _send(ws, {"type": p.AGENT_JOINED, "room_code": room.code,
                      "token": session.token, "server_time": now_ms(),
                      "compensation_ms": session.compensation_ms,
                      "lead_ms": room.lead_ms, "resumed": resumed})
+    # 加入后立即检查更新（agent.joined 之后发，保证客户端先拿到令牌与补偿值）
+    await push_update_if_behind(room, session, feed, audit)
     await room.notify_controller({"type": p.AGENT_UPDATED, "agent": session.state()})
     audit.log("agent_join", room=room.code, session=session.session_id,
-              nickname=session.nickname)
+              nickname=session.nickname, build_version=session.build_version)
 
     try:
         while True:
@@ -339,7 +372,8 @@ async def run_agent_session(ws: WebSocket, manager: RoomManager,
 # 入口
 # ---------------------------------------------------------------------------
 
-async def handle_ws(ws: WebSocket, manager: RoomManager, audit: AuditLog) -> None:
+async def handle_ws(ws: WebSocket, manager: RoomManager, audit: AuditLog,
+                    feed: UpdateFeed) -> None:
     await ws.accept()
     async with _close_on_exit(ws):
         try:
@@ -354,14 +388,18 @@ async def handle_ws(ws: WebSocket, manager: RoomManager, audit: AuditLog) -> Non
             await _send_error(ws, p.ERR_BAD_MESSAGE, "首条消息必须是 JSON 对象")
             return
 
-        if first.get("proto") != p.PROTO_VERSION:
-            await _send_error(ws, p.ERR_BAD_PROTO, f"协议版本不匹配，服务端要求 v{p.PROTO_VERSION}")
+        # 兼容窗口：接受 SUPPORTED_PROTOS 内的任意版本（v2 服务端同时接受 v1 客户端，
+        # 保证“先发服务端镜像、再发被控端”的升级顺序不导致任何客户端被拒）
+        if first.get("proto") not in p.SUPPORTED_PROTOS:
+            await _send_error(ws, p.ERR_BAD_PROTO,
+                              f"协议版本不受支持（服务端支持 "
+                              f"{', '.join('v' + str(v) for v in p.SUPPORTED_PROTOS)}）")
             return
 
         mtype = first.get("type")
         if mtype in (p.CTRL_CREATE, p.CTRL_JOIN, p.CTRL_RESUME):
             await run_controller_session(ws, manager, audit, first)
         elif mtype == p.AGENT_JOIN:
-            await run_agent_session(ws, manager, audit, first)
+            await run_agent_session(ws, manager, audit, first, feed)
         else:
             await _send_error(ws, p.ERR_BAD_MESSAGE, f"未知的首条消息类型: {mtype}")

@@ -3,6 +3,13 @@
 # 首次部署前请先准备权限（容器以固定 UID 10001 运行，见 Dockerfile）：
 #   mkdir -p data && sudo chown -R 10001:10001 data
 # 如需从源码构建镜像，使用：docker build -t yunshenwuji/scriptcue-server:latest .
+#
+# 应用内自动更新通道（可选，见 docs/auto-update.md）。两条地址都配置后启用：
+#   environment:
+#     SC_UPDATE_MANIFEST_URL: https://cdn.kadaiad.fun/www/ScriptCue-update/update-manifest.json
+#     SC_UPDATE_ASSET_BASE_URL: https://cdn.kadaiad.fun/www/ScriptCue-update/
+# 钉版本（忽略 CDN 直到手动解除）时改用本地清单文件（放入 ./data 绑定挂载即可）：
+#     SC_UPDATE_MANIFEST_FILE: /app/data/update-manifest.json
 services:
   scriptcue-server:
     image: yunshenwuji/scriptcue-server:latest

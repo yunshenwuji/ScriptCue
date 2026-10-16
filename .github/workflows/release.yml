@@ -1,6 +1,7 @@
 # 发版打包流水线：
-# - 推送 v* 标签 → 三平台打包并创建 GitHub Release（附产物）
+# - 推送 v* 标签 → 三平台打包并创建 GitHub Release（附产物与 update-manifest.json）
 # - 手动触发（workflow_dispatch）→ 仅执行打包，产物在 Actions 运行页下载（用于验证打包）
+# 清单与产物的 CDN 同步由维护者手动完成，见 docs/auto-update.md。
 name: Release
 
 on:
@@ -25,6 +26,23 @@ jobs:
 
       - name: 安装依赖
         run: pip install -r agent/requirements.txt pyinstaller
+
+      # tag 触发时把版本号注入 agent/agent/version.py（单文件，覆盖 dev 占位）；
+      # 手动触发时保持 0.0.0.dev，产物不会被自动更新通道当作正式版本。
+      - name: 写入版本号（tag 触发时）
+        shell: bash
+        run: |
+          if [[ "${GITHUB_REF}" == refs/tags/v* ]]; then
+            ver="${GITHUB_REF_NAME#v}"
+            # BSD/GNU 通用写法（macOS runner 的 sed 为 BSD 系，-i 必须带后缀参数）
+            sed -i.bak 's/^APP_VERSION = .*/APP_VERSION = "'"$ver"'"/' agent/agent/version.py \
+              && rm -f agent/agent/version.py.bak
+            grep -q "APP_VERSION = \"$ver\"" agent/agent/version.py \
+              || { echo "::error::版本号写入失败"; exit 1; }
+            echo "版本号已写入: $ver"
+          else
+            echo "非 tag 触发，保持 dev 版本"
+          fi
 
       - name: 打包 Windows x64
         working-directory: agent
@@ -59,6 +77,22 @@ jobs:
 
       - name: 安装依赖
         run: pip install -r agent/requirements.txt pyinstaller
+
+      # tag 触发时把版本号注入 agent/agent/version.py（见 build-windows 同步骤说明）
+      - name: 写入版本号（tag 触发时）
+        shell: bash
+        run: |
+          if [[ "${GITHUB_REF}" == refs/tags/v* ]]; then
+            ver="${GITHUB_REF_NAME#v}"
+            # BSD/GNU 通用写法（macOS runner 的 sed 为 BSD 系，-i 必须带后缀参数）
+            sed -i.bak 's/^APP_VERSION = .*/APP_VERSION = "'"$ver"'"/' agent/agent/version.py \
+              && rm -f agent/agent/version.py.bak
+            grep -q "APP_VERSION = \"$ver\"" agent/agent/version.py \
+              || { echo "::error::版本号写入失败"; exit 1; }
+            echo "版本号已写入: $ver"
+          else
+            echo "非 tag 触发，保持 dev 版本"
+          fi
 
       # 自签代码签名证书导入（可选）：未配置 Secrets 时跳过，产物保留 ad-hoc 签名。
       # 稳定签名身份使 TCC"辅助功能"授权跨版本保留（详见 agent/build_macos.sh 签名段）。
@@ -106,7 +140,9 @@ jobs:
       - uses: actions/upload-artifact@v7
         with:
           name: ScriptCueAgent-macos-${{ matrix.arch }}
-          path: "agent/dist/ScriptCueAgent-macos-${{ matrix.arch }}.dmg"
+          path: |
+            agent/dist/ScriptCueAgent-macos-${{ matrix.arch }}.dmg
+            agent/dist/ScriptCueAgent-macos-${{ matrix.arch }}-update.tar.gz
 
   # 汇总创建 Release（仅 tag 触发；手动运行只产出上方 artifacts）
   release:
@@ -114,11 +150,77 @@ jobs:
     needs: [build-windows, build-macos]
     runs-on: ubuntu-latest
     steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 1
+
       - name: 汇集打包产物
         uses: actions/download-artifact@v8
         with:
           path: dist
           merge-multiple: true
+
+      # 对产物逐个做 sha256，产出 .sha256 附件与更新清单（稳定名 + 实名各一份）。
+      # 清单只含文件名、不含 CDN 绝对地址：下发时由服务端注入 url（见
+      # server/server/updatefeed.py 与 docs/auto-update.md）。
+      - name: 生成校验和与更新清单
+        env:
+          MACOS_SIGNING_IDENTITY: ${{ secrets.MACOS_SIGNING_IDENTITY }}
+        run: |
+          python3 - <<'PY'
+          import datetime, hashlib, json, os, pathlib, subprocess
+
+          dist = pathlib.Path("dist")
+          tag = os.environ["GITHUB_REF_NAME"]
+          version = tag[1:] if tag.startswith("v") else tag
+
+          # 平台键 → (产物名, kind, 是否 macOS 自签身份)
+          spec = {
+              "windows-x64": ("ScriptCueAgent-windows-x64.exe", "exe", False),
+              "macos-arm64": ("ScriptCueAgent-macos-arm64-update.tar.gz", "tar.gz", True),
+              "macos-x86_64": ("ScriptCueAgent-macos-x86_64-update.tar.gz", "tar.gz", True),
+          }
+
+          def sha256(path):
+              h = hashlib.sha256()
+              with open(path, "rb") as fh:
+                  for chunk in iter(lambda: fh.read(1024 * 1024), b""):
+                      h.update(chunk)
+              return h.hexdigest()
+
+          authority = os.environ.get("MACOS_SIGNING_IDENTITY", "").strip()
+          assets = {}
+          for key, (name, kind, is_macos) in spec.items():
+              path = dist / name
+              if not path.is_file():
+                  raise SystemExit(f"缺少打包产物: {path}")
+              digest = sha256(path)
+              (dist / (name + ".sha256")).write_text(
+                  f"{digest}  {name}\n", encoding="utf-8")
+              entry = {"asset": name, "kind": kind,
+                       "sha256": digest, "size": path.stat().st_size}
+              if is_macos and authority:
+                  entry["codesign_authority"] = authority
+              assets[key] = entry
+
+          notes = subprocess.run(
+              ["git", "log", "-1", "--pretty=%s"],
+              capture_output=True, text=True).stdout.strip()
+
+          manifest = {
+              "schema": 1,
+              "version": version,
+              "released_at": datetime.datetime.now(
+                  datetime.timezone.utc).isoformat(timespec="seconds"),
+              "notes": notes,
+              "assets": assets,
+          }
+          text = json.dumps(manifest, ensure_ascii=False, indent=2) + "\n"
+          (dist / "update-manifest.json").write_text(text, encoding="utf-8")
+          (dist / f"update-manifest-{version}.json").write_text(
+              text, encoding="utf-8")
+          print(text)
+          PY
 
       - name: 创建 GitHub Release
         uses: softprops/action-gh-release@v3

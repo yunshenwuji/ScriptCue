@@ -87,16 +87,21 @@ python -m agent.cli --server ws://127.0.0.1:8000 --room <房间码> --nickname <
 - 改动共享契约的责任链：同一笔改动里必须同时更新 `docs/protocol.md`、`server/server/protocol.py` 与 `agent/agent/protocol.py`，并递增 `PROTO_VERSION`；由提交这笔改动的人负责确认三者一致，做法是逐字比对上面列出的共享契约常量。只改某一端独有的运行限制常量时，不递增 `PROTO_VERSION`，也不需要同步另一端。这条责任链目前只靠人工执行，仓库里还没有机械检查兜底；
 - 另有两处跨端耦合但不要求逐字一致：`DEFAULT_LEAD_MS` 以服务端为权威默认值（可用环境变量 `SC_DEFAULT_LEAD_MS` 覆盖）并经 `agent.joined` 下发，被控端那份只是本地兜底值、不参与触发时刻计算；服务端的 `AGENT_OFFLINE_S` 取值是被控端 `HEARTBEAT_INTERVAL_S` 的 3 倍，改心跳间隔时必须一并调整服务端阈值与 `docs/protocol.md`；
 - 服务端与被控端可独立部署，互不依赖对方的代码包。
+- 版本号与更新清单的责任链：被控端版本号唯一来源是 `agent/agent/version.py`（本地保持 `0.0.0.dev`，发版时由 CI 从 git tag 注入，如 tag `v1.1.0` → `APP_VERSION = "1.1.0"`）；更新清单 schema 变更必须同一笔改动同步 `docs/auto-update.md`、`.github/workflows/release.yml` 的清单生成步骤与两端解析代码（`server/server/updatefeed.py`、`agent/agent/updater.py`）。
 - 改动被控端核心链路（时钟偏移换算、绝对时刻调度、取消与触发回执）前后，都要跑一次聚焦检查：在仓库根目录执行 `python -m unittest discover -s agent/tests -t agent -v`（需先按上面的快速开始安装 `agent/requirements.txt`；Windows 下若未激活虚拟环境，把 `python` 换成 `.venv\Scripts\python.exe`）。检查用标准库 unittest 编写、位于 `agent/tests/`，不引入额外依赖，运行时不连网也不注入真实按键；这是当前项目唯一的机械验证入口，新增被控端行为时请在此处补充用例。
+- 服务端同样有一个聚焦检查入口：`python -m unittest discover -s server/tests -t server -v`（用同一虚拟环境即可，不额外装依赖；不连网、不写真实数据目录）。新增服务端行为（如更新清单源）时在其中补充用例。
 
 ## 版本发布与下载
 
-- 推送 `v*` 标签（如 `git tag v1.0.0 && git push origin v1.0.0`）自动触发 GitHub Actions 打包，并创建 GitHub Release，产物包括：
+- 推送 `v*` 标签（如 `git tag v1.1.0 && git push origin v1.1.0`）自动触发 GitHub Actions 打包，并创建 GitHub Release，产物包括：
   - `ScriptCueAgent-windows-x64.exe`（Windows 10+ 64 位单文件）；
-  - `ScriptCueAgent-macos-arm64.dmg`（macOS Apple Silicon）与 `ScriptCueAgent-macos-x86_64.dmg`（macOS Intel，拖拽安装镜像）。
-  也可在 Actions 页面手动运行 **Release** workflow 仅验证打包（产物在运行页下载）；
+  - `ScriptCueAgent-macos-arm64.dmg`（macOS Apple Silicon）与 `ScriptCueAgent-macos-x86_64.dmg`（macOS Intel，拖拽安装镜像）；
+  - `ScriptCueAgent-macos-<架构>-update.tar.gz`（应用内自动更新包，免 dmg 挂载）；
+  - 各产物的 `.sha256` 校验和，以及 `update-manifest.json` / `update-manifest-<version>.json` 更新清单。
+  也可在 Actions 页面手动运行 **Release** workflow 仅验证打包（产物在运行页下载，此时版本保持 dev、不会进入自动更新通道）；
+- 应用内自动更新的完整链路（CDN 目录约定、服务端环境变量、发版顺序硬约束、回退操作与排障）见 [自动更新设计](docs/auto-update.md)。发版顺序硬约束：**先部署新服务端镜像，再发布 v2 被控端**；清单与产物到 CDN 的同步由维护者手动完成；
 - 服务端 Docker Hub 镜像（`yunshenwuji/scriptcue-server`，amd64）在 Actions 页面手动运行 **Docker Hub** workflow 推送：从 `main` 触发推送 `latest`，从 tag 触发推送对应版本号。需先在仓库 Secrets 配置 `DOCKERHUB_USERNAME` 与 `DOCKERHUB_TOKEN`；
-- 未签名产物的首次打开方法见 [首次打开指引](docs/first-run.md)。
+- 未签名产物的首次打开方法见 [首次打开指引](docs/first-run.md)（v1.1.0 起应用内更新不再需要重新放行）。
 
 ## 开源协议
 

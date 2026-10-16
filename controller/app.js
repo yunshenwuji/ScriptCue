@@ -3,7 +3,7 @@
  */
 "use strict";
 
-const PROTO = 1;
+const PROTO = 2;
 const RECEIPT_TIMEOUT_MS = 8000; // 回执等待窗口
 const DELTA_WARN_MS = 50;        // 偏差告警阈值（PRD 验收标准）
 const RECONNECT_MAX_S = 10;      // 重连退避上限
@@ -248,14 +248,15 @@ function buildAgentCard(agent) {
   const card = document.createElement("div");
   card.className = "agent";
 
-  // 顶部：昵称 + 状态徽章
+  // 顶部：昵称 + 状态徽章 + 可用更新徽章
   const top = document.createElement("div");
   top.className = "agent-top";
   const nick = document.createElement("span");
   nick.className = "agent-nick";
   const stateBadge = document.createElement("span");
   const qBadge = document.createElement("span");
-  top.append(nick, stateBadge, qBadge);
+  const updBadge = document.createElement("span");
+  top.append(nick, stateBadge, qBadge, updBadge);
   card.appendChild(top);
 
   // 元信息：偏移 / RTT / 最近偏差
@@ -294,7 +295,7 @@ function buildAgentCard(agent) {
   actions.appendChild(compEditor);
   card.appendChild(actions);
 
-  return { root: card, nick, stateBadge, qBadge, meta, testBtn, compInput };
+  return { root: card, nick, stateBadge, qBadge, updBadge, meta, testBtn, compInput };
 }
 
 function setBadge(el, text, cls) {
@@ -319,7 +320,18 @@ function updateAgentCard(agent, els) {
   }
   setBadge(els.qBadge, "时钟" + (QUALITY_TEXT[q] || q), "q-" + q);
 
+  // 可用更新徽章：服务端计算的 update_available（低版本被控端无此字段时不显示）
+  if (agent.update_available) {
+    setBadge(els.updBadge, "有可用更新", "update-available");
+    els.updBadge.hidden = false;
+  } else {
+    els.updBadge.hidden = true;
+  }
+
   const parts = [];
+  if (agent.build_version) {
+    parts.push(`版本 v${agent.build_version}`);
+  }
   if (agent.clock_offset_ms != null) {
     parts.push(`偏移 ${fmtMs(agent.clock_offset_ms)}`);
   }

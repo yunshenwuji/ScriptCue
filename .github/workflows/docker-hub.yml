@@ -1,17 +1,35 @@
 # 服务端 Docker 镜像构建并推送 Docker Hub（手动触发）：
-# - 从 main 分支触发 → 推送 latest 标签
-# - 从 tag（v*）触发 → 推送对应版本号标签
+# - 派发时填写镜像标签（inputs.tag，默认 latest）：任意分支/标签均可派发，
+#   不再依赖"默认分支才推 latest"的推断逻辑（便于功能分支直接出测试镜像）
+# - 常用：latest（正式）、beta（测试）；也可输入版本号（如 1.1.0）
 # 前置：仓库 Secrets 中配置 DOCKERHUB_USERNAME 与 DOCKERHUB_TOKEN
 name: Docker Hub
 
 on:
   workflow_dispatch:
+    inputs:
+      tag:
+        description: "镜像标签（默认 latest，可自定义如 beta / 1.1.0）"
+        required: true
+        default: "latest"
+        type: string
 
 jobs:
   push:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
+
+      # 标签合法性预检（Docker 标签规范：小写字母/数字/./_/-，以字母或数字开头，
+      # 最长 128 字符）——提前失败，避免构建完成后才在推送环节报错
+      - name: 校验镜像标签
+        env:
+          TAG: ${{ inputs.tag }}
+        run: |
+          if ! printf '%s' "$TAG" | grep -Eq '^[a-z0-9][a-z0-9._-]{0,127}$'; then
+            echo "::error::非法镜像标签「$TAG」：仅允许小写字母/数字/点/下划线/连字符，且需以字母或数字开头"
+            exit 1
+          fi
 
       - uses: docker/setup-buildx-action@v4
 
@@ -20,14 +38,11 @@ jobs:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
 
-      # main 触发 → latest；tag 触发 → 版本号（如 v1.0.0 → 1.0.0）
       - id: meta
         uses: docker/metadata-action@v6
         with:
           images: yunshenwuji/scriptcue-server
-          tags: |
-            type=raw,value=latest,enable={{is_default_branch}}
-            type=semver,pattern={{version}}
+          tags: type=raw,value=${{ inputs.tag }}
 
       - uses: docker/build-push-action@v7
         with:

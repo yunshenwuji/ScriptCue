@@ -4,13 +4,13 @@
 「共享契约」部分——两份文件不是逐字等价副本，各端独有的常量只存在于自己那一份。
 
 共享契约（两端必须逐字一致，改动时递增 PROTO_VERSION）：
-    PROTO_VERSION；消息类型；指令类型与 VALID_COMMANDS；时钟质量分级 QUALITY_*；
-    错误码 ERR_*；HEARTBEAT_INTERVAL_S。
+    PROTO_VERSION；消息类型（含 UPDATE_AVAILABLE）；指令类型与 VALID_COMMANDS；
+    时钟质量分级 QUALITY_*；错误码 ERR_*；HEARTBEAT_INTERVAL_S。
 
 各端独有（不在同步范围内，改动不递增 PROTO_VERSION）：
-    服务端——MAX_AGENTS_PER_ROOM、ROOM_CODE_LENGTH、ROOM_CODE_ALPHABET、
-             ROOM_IDLE_TTL_S、AGENT_OFFLINE_S、RECEIPT_TIMEOUT_MS、
-             AGENT_PUSH_THROTTLE_S；
+    服务端——SUPPORTED_PROTOS、MAX_AGENTS_PER_ROOM、ROOM_CODE_LENGTH、
+             ROOM_CODE_ALPHABET、ROOM_IDLE_TTL_S、AGENT_OFFLINE_S、
+             RECEIPT_TIMEOUT_MS、AGENT_PUSH_THROTTLE_S；
     被控端——RECONNECT_BACKOFF_S、RECONNECT_BACKOFF_MAX_S、DENSE_SYNC_SAMPLES、
              DENSE_SYNC_INTERVAL_MS、MAINTAIN_SYNC_INTERVAL_S、SPIN_THRESHOLD_MS。
 
@@ -26,7 +26,15 @@
 
 import os
 
-PROTO_VERSION = 1
+PROTO_VERSION = 2
+
+# 服务端独有：接受的首条消息协议版本集合（兼容窗口，显式列值而非引用
+# PROTO_VERSION，避免后续递增时意外跳过中间版本）。
+# v2 起协议引入 build_version 与 update.available，服务端同时接受 v1 客户端：
+# 发布顺序硬约束——先部署本服务端，再发布 v2 被控端/主控端；顺序颠倒时
+# 新客户端会被旧服务端的严格等值校验拒绝（bad_proto）而连不上。
+# 收窄兼容窗口时递增 PROTO_VERSION、同步改本常量并在 docs/protocol.md 记录。
+SUPPORTED_PROTOS = (1, 2)
 
 # ---- 消息类型 ----
 # 主控端 → 服务器
@@ -55,6 +63,9 @@ CLOCK_SYNC_RES = "clock.sync_res"
 CMD_EXEC = "command.exec"
 CMD_CANCEL = "command.cancel"
 COMP_UPDATE = "comp.update"
+# 服务器 → 被控端：有可用新版本（载荷含下发的 update-manifest.json 副本）。
+# 仅推给 proto ≥ 2 的被控端；v1 客户端不认识该消息，服务端不得向其推送。
+UPDATE_AVAILABLE = "update.available"
 
 # 服务器 → 主控端（状态汇聚）
 AGENT_UPDATED = "agent.updated"

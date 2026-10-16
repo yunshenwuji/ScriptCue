@@ -5,8 +5,8 @@
 只存在于本文件，服务端那份没有。
 
 共享契约（两端必须逐字一致，改动时递增 PROTO_VERSION）：
-    PROTO_VERSION；消息类型；指令类型与 VALID_COMMANDS；时钟质量分级 QUALITY_*；
-    错误码 ERR_*；HEARTBEAT_INTERVAL_S。
+    PROTO_VERSION；消息类型（含 UPDATE_AVAILABLE）；指令类型与 VALID_COMMANDS；
+    时钟质量分级 QUALITY_*；错误码 ERR_*；HEARTBEAT_INTERVAL_S。
 
 被控端独有（不在同步范围内，改动不递增 PROTO_VERSION）：
     RECONNECT_BACKOFF_S、RECONNECT_BACKOFF_MAX_S、DENSE_SYNC_SAMPLES、
@@ -21,7 +21,7 @@
 与两端副本、递增 PROTO_VERSION，并由提交者逐字比对确认三者一致。
 """
 
-PROTO_VERSION = 1
+PROTO_VERSION = 2
 
 # ---- 消息类型 ----
 # 主控端 → 服务器
@@ -50,6 +50,9 @@ CLOCK_SYNC_RES = "clock.sync_res"
 CMD_EXEC = "command.exec"
 CMD_CANCEL = "command.cancel"
 COMP_UPDATE = "comp.update"
+# 服务器 → 被控端：有可用新版本（载荷含服务端下发的 update-manifest.json 副本）。
+# 服务端只推给 proto ≥ 2 的被控端；收到后走与本地定时轮询同一套更新处理。
+UPDATE_AVAILABLE = "update.available"
 
 # 服务器 → 主控端（状态汇聚）
 AGENT_UPDATED = "agent.updated"

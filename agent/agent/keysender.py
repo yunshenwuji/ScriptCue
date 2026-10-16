@@ -253,7 +253,15 @@ class KeySender:
             raise KeySendError(f"不支持的操作系统: {sys.platform}")
 
     def check(self) -> tuple[bool, str]:
-        """开机自检（R-11）：验证按键注入能力。返回 (是否通过, 说明)。"""
+        """开机自检（R-11）：验证按键注入能力。返回 (是否通过, 说明)。
+
+        dry_run（更新预检）先于平台授权检查短路：待装的新二进制位于暂存目录、
+        签名要求与当前进程不同，macOS 上不可能持有 TCC 辅助功能授权——
+        把授权状态当预检门槛会让 macOS 应用内更新永远无法完成。授权只影响
+        "实际按键注入"能力，由正式启动时的开机自检负责呈现。
+        """
+        if self.dry_run:
+            return True, "演练模式：跳过实际按键注入"
         if sys.platform == "darwin":
             try:
                 trusted = accessibility_trusted()
@@ -262,8 +270,6 @@ class KeySender:
             if not trusted:
                 return False, ("未获得 macOS 辅助功能权限。请按启动引导授权"
                                "（系统设置 → 隐私与安全性 → 辅助功能），授权后重启本程序。")
-        if self.dry_run:
-            return True, "演练模式：跳过实际按键注入"
         try:
             # 向当前前台窗口发送一次空格作为自检（与正式触发同一路径）
             _send_space()

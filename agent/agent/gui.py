@@ -8,8 +8,10 @@
 - R-09 置顶小面板（紧凑模式，可拖动）
 - R-10 macOS 辅助功能权限引导
 - R-11 开机自检
+- 应用内自动更新（v1.1 新增：检查/下载/点击替换/回退，见 docs/auto-update.md）
 
 启动：python -m agent.gui
+预检：python -m agent.gui --selftest（替换前准入闸，见 _selftest）
 """
 
 import asyncio
@@ -30,6 +32,9 @@ from .engine import AgentEngine
 from .keysender import KeySender
 from .logsetup import setup_logging
 from .timeutil import now_ms
+from .updater import (HEALTH_CONFIRM_S, AgentUpdater, note_clean_exit,
+                      safety_window, startup_health_gate)
+from .version import APP_VERSION
 
 logger = logging.getLogger("scriptcue.agent")
 
@@ -42,6 +47,12 @@ CMD_TEXT = {p.CMD_PLAY: "起播", p.CMD_PAUSE: "暂停", p.CMD_TEST: "测试"}
 
 COLOR_READY = "#1a9e55"      # 「我已就绪」未就绪态底色（绿）
 COLOR_READY_ON = "#8a93a6"   # 「我已就绪」已就绪态底色（灰）
+
+# 更新状态行的四档颜色：待机 / 已下载可更新 / 下载或等待中 / 正在替换重启
+COLOR_UPDATE_IDLE = "#8a93a6"
+COLOR_UPDATE_READY = "#1a9e55"
+COLOR_UPDATE_WARN = "#d98a00"
+COLOR_UPDATE_BUSY = "#b02a2a"
 
 # 服务器线路预设：口述员只需选择线路名，无需感知真实地址（低门槛）
 SERVER_PRESETS = {
@@ -288,6 +299,15 @@ class GuiApp:
         self.key_sender: KeySender | None = None
         self.pending: dict[str, dict] = {}   # command_id -> {command, local_fire}
         self.panel: tk.Toplevel | None = None
+        self._selftest_ok = False            # 开机自检结果（仅记录，不作为更新健康判据）
+        self._update_ready: dict | None = None   # 已下载待安装的更新包信息
+        # 自动更新编排：事件汇入同一队列；安全窗口/服务器地址取自本 App 实时状态
+        self.updater = AgentUpdater(
+            emit=self.event_queue.put,
+            safety_ok=lambda: safety_window(self.engine, self.pending),
+            server_url_fn=self._current_server_url,
+            on_before_restart=self._before_update_restart,
+        )
 
         with _silence_c_stderr():
             self._build_ui()
@@ -297,7 +317,7 @@ class GuiApp:
     def _build_ui(self):
         root = tk.Tk()
         self.root = root
-        root.title(APP_NAME)
+        root.title(f"{APP_NAME} v{APP_VERSION}")
         root.geometry("400x680")
         root.minsize(360, 560)
         root.protocol("WM_DELETE_WINDOW", self._on_close)
@@ -354,7 +374,26 @@ class GuiApp:
         self.lbl_clock = ttk.Label(frm_status, text="时钟：未同步")
         self.lbl_clock.pack()
         self.lbl_comp = ttk.Label(frm_status, text="补偿值：0ms")
-        self.lbl_comp.pack(pady=(0, 6))
+        self.lbl_comp.pack(pady=(0, 2))
+        # 版本与更新状态行：有新版本时整行变色；已下载时点击可进入更新确认流程
+        self.lbl_update = tk.Label(frm_status, text=f"当前版本 v{APP_VERSION}",
+                                   fg=COLOR_UPDATE_IDLE, font=UI_FONT, cursor="hand2")
+        self.lbl_update.pack(pady=(0, 2))
+        self.lbl_update.bind("<Button-1>", lambda _e: self._on_update_label_click())
+        # 更新操作行：与版本行同属状态区（放工具行会在 400px 宽度下被挤压到不可用）；
+        # 回退按钮仅当存在 .old（上一版本）时可用，否则置灰
+        row_upd = ttk.Frame(frm_status)
+        row_upd.pack(pady=(0, 6))
+        self.btn_check_update = ttk.Button(row_upd, text="检查更新",
+                                           command=self._manual_check_update)
+        self.btn_check_update.pack(side="left", padx=(0, 6))
+        self.btn_rollback = ttk.Button(
+            row_upd, text="回退上一版本", command=self._manual_rollback,
+            state="normal" if self.updater.previous_install() else "disabled")
+        self.btn_rollback.pack(side="left")
+        # 下载进度条：随事件显隐，默认不占布局
+        self.prg_update = ttk.Progressbar(frm_status, mode="determinate",
+                                          maximum=100, length=200)
 
         # 倒计时区
         frm_count = ttk.LabelFrame(root, text="指令倒计时")
@@ -562,6 +601,187 @@ class GuiApp:
             self.var_comp.set(ms)
             self.lbl_comp.configure(text=f"补偿值：{ms}ms")
             self._log(f"补偿值已更新为 {ms}ms（来自主控端）")
+        elif event == "update_available":
+            if evt.get("source") == "server":
+                # 服务端推送的清单：交给更新器走与轮询一致的下载/校验路径
+                manifest = evt.get("manifest")
+                if isinstance(manifest, dict):
+                    self.updater.offer_server_manifest(manifest)
+            else:
+                self._on_update_available(evt)
+        elif event == "update_progress":
+            percent = int(evt.get("percent") or 0)
+            self._show_update_progress(percent)
+            self._set_update_label(
+                f"正在下载 v{evt.get('version')} … {percent}%", COLOR_UPDATE_WARN)
+        elif event == "update_downloaded":
+            self._update_ready = dict(evt)
+            self._hide_update_progress()
+            self._set_update_label(
+                f"发现新版本 v{evt.get('version')}（已下载，点击更新）",
+                COLOR_UPDATE_READY)
+            self._log(f"新版本 v{evt.get('version')} 已下载完成，点击版本行可更新")
+        elif event == "update_none":
+            if evt.get("manual"):
+                messagebox.showinfo(APP_NAME, evt.get("message")
+                                    or f"当前已是最新版本 v{APP_VERSION}")
+        elif event == "update_failed":
+            self._hide_update_progress()
+            # 应用/回退失败后恢复操作按钮（提交成功时被置灰）
+            self.btn_check_update.state(["!disabled"])
+            if self.updater.previous_install():
+                self.btn_rollback.state(["!disabled"])
+            if evt.get("message"):
+                self._log(f"更新提示：{evt.get('message')}")
+            ready = evt.get("ready")
+            if isinstance(ready, dict):
+                # 应用阶段失败（selftest/签名不兼容/替换失败等）：恢复"已下载
+                # 可点击"，修复环境后可直接重试，无需重新下载
+                self._update_ready = dict(ready)
+                self._set_update_label(
+                    f"发现新版本 v{ready.get('version')}（已下载，点击重试更新）",
+                    COLOR_UPDATE_READY)
+            elif not self._update_ready:
+                self._set_update_label(f"当前版本 v{APP_VERSION}", COLOR_UPDATE_IDLE)
+            if evt.get("manual"):
+                messagebox.showwarning(APP_NAME, evt.get("message") or "更新失败")
+        elif event == "update_applying":
+            action = "回退到" if evt.get("rollback") else "更新到"
+            self._hide_update_progress()
+            self._set_update_label(
+                f"正在{action} v{evt.get('version')}，程序即将重启…",
+                COLOR_UPDATE_BUSY)
+
+    # ---------------- 应用内更新（v1.1 新增） ----------------
+
+    def _set_update_label(self, text: str, color: str = COLOR_UPDATE_IDLE) -> None:
+        self.lbl_update.configure(text=text, fg=color)
+
+    def _on_update_available(self, evt: dict) -> None:
+        """更新器发现新版本后的界面反馈（三种形态：等待窗口/下载中/已下载）。"""
+        version = evt.get("version")
+        if evt.get("downloaded"):
+            self._update_ready = dict(evt)
+            self._hide_update_progress()
+            self._set_update_label(
+                f"发现新版本 v{version}（已下载，点击更新）", COLOR_UPDATE_READY)
+        elif evt.get("waiting"):
+            self._set_update_label(
+                f"发现新版本 v{version}（等待演出空闲后下载）", COLOR_UPDATE_WARN)
+        else:
+            self._update_ready = None
+            self._show_update_progress(0)
+            self._set_update_label(f"发现新版本 v{version}（正在下载…）",
+                                   COLOR_UPDATE_WARN)
+
+    def _show_update_progress(self, percent: int) -> None:
+        if not self.prg_update.winfo_ismapped():
+            self.prg_update.pack(fill="x", padx=24, pady=(0, 6))
+        self.prg_update["value"] = max(0, min(100, percent))
+
+    def _hide_update_progress(self) -> None:
+        if self.prg_update.winfo_ismapped():
+            self.prg_update.pack_forget()
+
+    def _on_update_label_click(self) -> None:
+        """点击版本行：有已下载的新版本时进入更新确认流程。"""
+        if self._update_ready:
+            self._confirm_and_apply_update()
+
+    def _confirm_and_apply_update(self) -> None:
+        """替换前链路：安全窗口复检 → 确认弹框（含版本/说明/重启告知）→ 提交更新。"""
+        info = self._update_ready or {}
+        if not self.updater.safety_ok():
+            messagebox.showwarning(
+                APP_NAME,
+                "当前正在演出（已连接且已就绪或有待触发指令），\n"
+                "为避免影响演出，暂不能更新。\n\n"
+                "请先取消就绪并等待指令执行完，或断开连接后再试。")
+            return
+        version = info.get("version")
+        notes = (info.get("notes") or "").strip() or "（本次发布未提供更新说明）"
+        connected = bool(self.engine and self.engine.connected)
+        state_text = ("当前仍在房间连接中" if connected else "当前未连接") + \
+            ("，有待触发指令" if self.pending else "，无待触发指令")
+        if not messagebox.askyesno(
+                APP_NAME,
+                f"即将更新到 v{version} 并自动重启程序。\n\n"
+                f"更新内容：\n{notes}\n\n"
+                f"更新会断开当前房间连接并重启程序，重启后需重新加入房间。\n"
+                f"{state_text}。\n\n确定现在更新吗？"):
+            return
+        if connected and not messagebox.askyesno(
+                APP_NAME,
+                "再次确认：当前仍在房间连接中，\n"
+                "更新将立即断开连接并重启程序。\n\n确要继续吗？"):
+            return
+        self._log(f"开始更新到 v{version} …")
+        if self.updater.apply():
+            # 提交成功立即进入忙态：从确认到进程退出窗口可达数分钟，
+            # 重复提交会产生并发替换线程（互相破坏 .old 回退点）
+            self._update_ready = None
+            self.btn_check_update.state(["disabled"])
+            self.btn_rollback.state(["disabled"])
+            self._set_update_label(f"正在更新到 v{version}，程序即将重启…",
+                                   COLOR_UPDATE_BUSY)
+
+    def _manual_check_update(self) -> None:
+        """「检查更新」按钮：独立线程执行，结果经事件队列回显。"""
+        self._log("正在检查更新…")
+        self.updater.request_manual_check()
+
+    def _manual_rollback(self) -> None:
+        """「回退上一版本」按钮：仅当 .old 存在时可用（按钮态已控制）。"""
+        if self.updater.previous_install() is None:
+            messagebox.showinfo(APP_NAME, "没有可回退的上一版本")
+            return
+        if not self.updater.safety_ok():
+            messagebox.showwarning(
+                APP_NAME,
+                "当前正在演出（已连接且已就绪或有待触发指令），\n"
+                "为避免影响演出，暂不能回退。\n\n"
+                "请先取消就绪并等待指令执行完，或断开连接后再试。")
+            return
+        if not messagebox.askyesno(
+                APP_NAME,
+                "回退到上一版本将替换当前程序并自动重启。\n"
+                "回退会断开当前房间连接，重启后需重新加入房间。\n\n确定回退吗？"):
+            return
+        self._log("开始回退到上一版本 …")
+        if self.updater.request_rollback():
+            self.btn_check_update.state(["disabled"])
+            self.btn_rollback.state(["disabled"])
+            self._set_update_label("正在回退到上一版本，程序即将重启…",
+                                   COLOR_UPDATE_BUSY)
+
+    def _current_server_url(self) -> str:
+        """当前线路对应的服务器地址（更新器由此推导清单 URL）。"""
+        choice = self.var_server_choice.get()
+        if choice in SERVER_PRESETS:
+            return SERVER_PRESETS[choice]
+        return self.var_server.get().strip()
+
+    def _before_update_restart(self) -> None:
+        """替换/回退重启前的收尾：断开连接、冲刷日志（尽力而为）。"""
+        try:
+            if self.engine:
+                self.engine.disconnect()
+        except Exception:  # noqa: BLE001 - 收尾失败不阻断更新
+            logger.exception("重启前断开连接失败")
+        for handler in logger.handlers:
+            with contextlib.suppress(Exception):
+                handler.flush()
+
+    def _confirm_update_health(self) -> None:
+        """更新健康确认：mainloop 存活 HEALTH_CONFIRM_S 即视为"非启动即崩"。
+
+        按键自检可能因环境因素失败（UIPI 拦截、macOS 未授权等），不是产物
+        健康判据，只记日志、不参与判定——否则会出现"版本健康却被误回退"。
+        """
+        if not self._selftest_ok:
+            logger.warning("健康确认窗口内按键自检未通过（按环境因素处理，"
+                           "不影响更新确认）")
+        self.updater.mark_healthy()
 
     def _update_countdown(self):
         if not self.pending:
@@ -674,13 +894,19 @@ class GuiApp:
 
     def _on_close(self):
         logger.info("用户关闭窗口，退出")
+        note_clean_exit()   # 正常退出标记：不计入自动回退的"启动连崩"计数
+        self.updater.stop()
         if self.engine:
             self.engine.disconnect()
         self.root.destroy()
 
     def run(self):
+        self.updater.start()      # 更新检查线程（首查延迟 15s；回退判定见 main()）
         self._startup_check()
+        self.root.after(HEALTH_CONFIRM_S * 1000, self._confirm_update_health)
         self.root.mainloop()
+        # mainloop 正常返回 = 用户主动退出（崩溃走不到这里）
+        note_clean_exit()
 
     def _macos_accessibility_gate(self):
         """辅助功能权限引导（R-10）。
@@ -733,6 +959,7 @@ class GuiApp:
                 "  自动清除，请用「+」重新添加后再打开开关。\n\n"
                 "（授权后如仍未通过，请重启本程序）")
             if not retry:
+                note_clean_exit()   # 用户主动退出（非崩溃）
                 self.root.destroy()
                 sys.exit(1)
             if not reset_done:
@@ -749,6 +976,7 @@ class GuiApp:
 
         sender = KeySender()
         ok, message = sender.check()
+        self._selftest_ok = ok
         if not ok:
             logger.error("开机自检失败: %s", message)
             messagebox.showerror(APP_NAME, f"开机自检失败：\n{message}")
@@ -757,9 +985,51 @@ class GuiApp:
             self._log(message)
 
 
-def main():
+def main(argv=None) -> None:
+    """入口。`--selftest` 走替换前预检的独立最小路径（不建 Tk、不弹框）。"""
+    args = list(sys.argv[1:] if argv is None else argv)
+    if "--selftest" in args:
+        sys.exit(_selftest())
+    # 建 Tk 之前推进更新健康状态机：连 Tk 初始化都崩溃的坏版本也能被计入
+    # 连崩计数、在下一次启动自动回退（见 updater.startup_health_gate）
+    startup_health_gate()
     app = GuiApp()
     app.run()
+
+
+def _selftest() -> int:
+    """替换前预检（--selftest）：验证待装产物可导入、按键模块可构造。
+
+    更新器在替换前对新二进制跑本函数，非 0 即放弃替换、保留现有安装。
+    独立最小路径：**不建 Tk、不调 _startup_check()、不弹任何框**；日志写入
+    正常日志文件，便于事后诊断。
+
+    macOS 辅助功能授权不参与判定：待装二进制位于暂存目录、签名要求与当前
+    进程不同，不可能持有 TCC 授权；只做非交互探测（AXIsProcessTrusted，
+    绝不调带 prompt 的变体）验证 FFI 绑定可用，结果仅记日志。
+    """
+    try:
+        setup_logging()
+        # 导入全部运行模块，确保打包产物完整可用
+        from . import clocksync, scheduler, timeutil, tls, updater  # noqa: F401
+        if sys.platform == "darwin":
+            from . import keysender as ks
+            try:
+                logger.info("selftest: 辅助功能探测通过（trusted=%s，不影响结论）",
+                            ks.accessibility_trusted())
+            except Exception:  # noqa: BLE001 - 探测失败只记日志，不阻断
+                logger.warning("selftest: 辅助功能探测异常（非致命）", exc_info=True)
+        sender = KeySender(dry_run=True)
+        ok, message = sender.check()
+        if ok:
+            logger.info("selftest 通过: %s", message)
+            return 0
+        logger.error("selftest 未通过: %s", message)
+        return 1
+    except Exception:  # noqa: BLE001 - 预检失败必须返回非零而非抛出
+        with contextlib.suppress(Exception):
+            logger.exception("selftest 异常")
+        return 1
 
 
 if __name__ == "__main__":

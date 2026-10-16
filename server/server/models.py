@@ -29,6 +29,12 @@ class AgentSession:
         self.clock_rtt_ms: float | None = None
         self.compensation_ms = 0
         self.last_seen_ms = now_ms()
+        # 加入房间时声明的协议版本与构建版本（v2 起可选携带；更新通知据此判断）
+        self.proto = 1
+        self.build_version: str | None = None
+        # 更新可用性与推送去重：版本落后由 ws 层按更新清单计算后写入
+        self.update_available = False
+        self.last_pushed_version: str | None = None
         # 已下发、等待触发或回执的指令：command_id -> 执行时刻 at
         self.pending_commands: dict[str, int] = {}
 
@@ -49,6 +55,9 @@ class AgentSession:
             "clock_rtt_ms": self.clock_rtt_ms,
             "compensation_ms": self.compensation_ms,
             "last_seen": self.last_seen_ms,
+            # v2 新增：被控端构建版本与是否有可用更新（服务端计算，主控端只渲染）
+            "build_version": self.build_version,
+            "update_available": self.update_available,
         }
 
     async def send(self, msg: dict) -> bool:

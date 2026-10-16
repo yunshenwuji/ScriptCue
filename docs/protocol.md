@@ -1,6 +1,8 @@
-# ScriptCue 通信协议规范 v1.0
+# ScriptCue 通信协议规范 v1.1
 
 服务端、主控端、被控端三方共用的通信契约。协议为 **WebSocket + JSON 文本消息**，每条消息为单行 JSON 对象，必含 `type` 字段。
+
+> **升级顺序硬约束**：v1.1（proto 2）起服务端接受 `SUPPORTED_PROTOS=(1,2)`，但旧服务端是严格等值校验。因此发布时必须**先部署新服务端镜像，再发布 v2 被控端/主控端**；顺序颠倒会导致新客户端连不上旧服务端（`bad_proto`）。
 
 ## 1. 通用约定
 
@@ -8,8 +10,8 @@
 |---|---|
 | 传输 | WebSocket（生产环境 WSS），端点 `/{room_code}/ws` 不适用，统一使用 `/ws` |
 | 消息格式 | 单行 JSON：`{"type": "...", ...payload}` |
-| 协议版本 | 客户端首条消息携带 `proto: 1`，服务端不匹配时返回 `error` 并断开 |
-| 时间戳 | 除特别说明外均为 **毫秒级 Unix 时间戳**；"服务器时间"指服务端时钟，"本地时间"指发送方时钟 |
+| 协议版本 | 客户端首条消息携带 `proto: 2`；服务端接受 `SUPPORTED_PROTOS=(1,2)`，不在集合内返回 `bad_proto` 并断开（v1 客户端继续可用，但不会收到 `update.available`） |
+| 时间戳 | 除特别说明外均为 **毫秒级 Unix 时间戳**；“服务器时间”指服务端时钟，“本地时间”指发送方时钟 |
 | 心跳 | 被控端每 5s 发送 `agent.heartbeat`；服务端 15s（3 次）未收到则判定离线 |
 | 房间码 | 6 位字符（去除易混淆字符 0/O/1/I/L），由服务端生成 |
 
@@ -21,11 +23,11 @@
 
 ```jsonc
 // 创建房间（作为导控）
-{"type": "controller.create", "proto": 1, "room_name": "周六下午场", "password": "可选口令"}
+{"type": "controller.create", "proto": 2, "room_name": "周六下午场", "password": "可选口令"}
 // 加入既有房间
-{"type": "controller.join", "proto": 1, "room_code": "AB12CD", "password": "可选口令"}
+{"type": "controller.join", "proto": 2, "room_code": "AB12CD", "password": "可选口令"}
 // 断线重连恢复会话（凭令牌，服务器重启后令牌失效则返回错误，前端重新创建/加入）
-{"type": "controller.resume", "proto": 1, "room_code": "AB12CD", "token": "..."}
+{"type": "controller.resume", "proto": 2, "room_code": "AB12CD", "token": "..."}
 ```
 
 服务器应答：
@@ -39,12 +41,13 @@
 
 ```jsonc
 // 加入房间
-{"type": "agent.join", "proto": 1, "room_code": "AB12CD", "password": "可选", "nickname": "口述员-小王-剪映", "token": "重连时携带，可省略", "compensation_ms": 0}
+{"type": "agent.join", "proto": 2, "room_code": "AB12CD", "password": "可选", "nickname": "口述员-小王-剪映", "token": "重连时携带，可省略", "compensation_ms": 0, "build_version": "1.1.0"}
 // 加入时房间不存在则自动创建（用于服务器重启后客户端自动恢复房间）
-{"type": "agent.join", "proto": 1, "room_code": "AB12CD", "nickname": "...", "auto_create": true, "room_name": "周六下午场", "compensation_ms": 80}
+{"type": "agent.join", "proto": 2, "room_code": "AB12CD", "nickname": "...", "auto_create": true, "room_name": "周六下午场", "compensation_ms": 80, "build_version": "1.1.0"}
 ```
 
 `compensation_ms` 为被控端本地当前补偿值：新建会话时服务器用它初始化（保证服务器重启重建房间后校准结果不丢失）；令牌恢复会话时以服务器值为准。
+`build_version`（v1.1 新增，可选）为被控端构建版本（与发布 tag 同形、不带 v 前缀），服务端据此判断是否需要推送 `update.available`；v1 被控端不携带，服务端按未知版本处理（不推送）。
 
 服务器应答：
 
@@ -66,7 +69,9 @@
   "clock_offset_ms": -42.5,     // 最近一次可信偏移估算
   "clock_rtt_ms": 23,           // 该样本的往返时延
   "compensation_ms": 0,         // 补偿值（可正可负）
-  "last_seen": 1700000000000    // 最近一次收到消息的服务器时间
+  "last_seen": 1700000000000,   // 最近一次收到消息的服务器时间
+  "build_version": "1.1.0",     // 被控端构建版本（v1.1 新增；v1 被控端为 null）
+  "update_available": false     // 是否有可用更新（v1.1 新增；服务端按更新清单计算）
 }
 ```
 
@@ -179,7 +184,23 @@
 - 服务器重启导致房间丢失时：被控端收到 `error: room_not_found` 后，若本端是最初的创建参与者，则以 `auto_create` 重建房间；否则轮询重试等待房间出现；
 - 主控端断线重连同理；服务器重启后主控端需重新创建房间（房间码不变需导控重新告知，或凭本地保存的房间名重建）。
 
-## 7. 错误码
+## 7. 更新通知（v1.1 新增）
+
+服务端从更新清单（见 [自动更新设计](auto-update.md)）获知最新版本后，向**版本落后且 proto ≥ 2** 的被控端主动推送：
+
+```jsonc
+// 服务器 → 被控端
+{"type": "update.available", "manifest": { /* update-manifest.json 下发副本，含 url 与 server_time */ }}
+```
+
+推送时机：
+1. 被控端加入房间后（`agent.joined` 之后、凭 `build_version` 判定落后时）；
+2. 服务端清单刷新后（启动即刷 + 定时刷新，向全部在线落后会话补推）。
+
+去重规则：同一会话对同一版本只推一次（按 `last_pushed_version` 记录）；被控端升级重连后 `build_version` 更新，落后判定随之刷新。
+被控端可不依赖推送：也可自行 GET `/update/manifest.json` 轮询（推送只是第四条触发路径，与轮询走同一套下载校验流程）。
+
+## 8. 错误码
 
 | code | 含义 |
 |---|---|

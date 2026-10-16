@@ -14,6 +14,8 @@
     python -m unittest discover -s agent/tests -t agent -v
 """
 
+import asyncio
+import json
 import threading
 import time
 import unittest
@@ -22,6 +24,7 @@ from agent import protocol as p
 from agent.clocksync import Sample
 from agent.engine import AgentEngine
 from agent.timeutil import now_ms
+from agent.version import APP_VERSION
 
 # 轮询等待时的间隔（秒）
 POLL_INTERVAL_S = 0.01
@@ -209,6 +212,59 @@ class NormalFireTest(unittest.TestCase):
         self.assertAlmostEqual(fired[0]["delta_ms"], -engine.compensation_ms,
                                delta=150.0,
                                msg="delta_ms 应为回执时刻与 at 之差")
+
+
+class JoinHandshakeTest(unittest.TestCase):
+    """agent.join 契约（v1.1）：proto=2 且携带 build_version。"""
+
+    class FakeWs:
+        def __init__(self, reply: dict):
+            self.sent: list[dict] = []
+            self._reply = reply
+
+        async def send(self, raw):
+            self.sent.append(json.loads(raw))
+
+        async def recv(self):
+            return json.dumps(self._reply)
+
+    def test_join_carries_proto2_and_build_version(self):
+        engine = AgentEngine(server_url="ws://127.0.0.1:8000", room_code="ABC12D",
+                             nickname="聚焦检查")
+        ws = self.FakeWs({"type": p.AGENT_JOINED, "token": "tok",
+                          "server_time": 1, "compensation_ms": 0,
+                          "lead_ms": 3000, "resumed": False})
+        asyncio.run(engine._join(ws))
+        self.assertEqual(len(ws.sent), 1)
+        join = ws.sent[0]
+        self.assertEqual(join["type"], p.AGENT_JOIN)
+        self.assertEqual(join["proto"], 2, "v1.1 起握手协议版本为 2")
+        self.assertEqual(join["build_version"], APP_VERSION,
+                         "加入房间必须携带构建版本（服务端据此判断更新）")
+
+
+class UpdateAvailableDispatchTest(unittest.TestCase):
+    """服务端 update.available 的分发：汇出 update_available 事件（source=server）。"""
+
+    def _engine(self, events: list[dict]) -> AgentEngine:
+        return AgentEngine(server_url="ws://127.0.0.1:8000", room_code="ABC12D",
+                           nickname="聚焦检查", on_event=events.append)
+
+    def test_dispatch_emits_event(self):
+        events: list[dict] = []
+        engine = self._engine(events)
+        manifest = {"schema": 1, "version": "9.9.9", "assets": {}}
+        engine._dispatch(None, {"type": p.UPDATE_AVAILABLE, "manifest": manifest})
+        self.assertEqual(len(events), 1)
+        self.assertEqual(events[0]["event"], "update_available")
+        self.assertEqual(events[0]["source"], "server")
+        self.assertEqual(events[0]["manifest"], manifest)
+
+    def test_dispatch_ignores_malformed_manifest(self):
+        events: list[dict] = []
+        engine = self._engine(events)
+        engine._dispatch(None, {"type": p.UPDATE_AVAILABLE, "manifest": "bad"})
+        self.assertEqual(events, [], "manifest 非对象时不得发出事件")
 
 
 if __name__ == "__main__":
