@@ -7,9 +7,9 @@
 ## 1. 架构与数据流
 
 ```
-维护者手工同步                       服务端（Docker）                    被控端（GUI）
+CI 自动同步                           服务端（Docker）                    被控端（GUI）
 ┌───────────────────┐   GET(启动+每24h) ┌─────────────────┐  ①GET /update/manifest.json
-│ 123云盘 CDN 对象存储 │ ◀────────────── │ updatefeed.py    │  ②ws 推送 update.available
+│ 123云盘 CDN 直链空间 │ ◀────────────── │ updatefeed.py    │  ②ws 推送 update.available
 │ cdn.kadaiad.fun    │               │ 校验+内存/磁盘缓存  │ ◀────────────┐
 │  /www/ScriptCue-update │ ─────────────▶ │ 注入 url+server_time│              │ ③下载（sha256 双取）
 │  update-manifest.json│  下发副本        │ /update/manifest.json│              ▼
@@ -17,8 +17,11 @@
 └───────────────────┘               └─────────────────┘          ⑤用户点击 → selftest → 替换 → 重启
 ```
 
-- **CI**（release.yml，tag 触发）只产出产物与 `update-manifest.json` 作为 Release 附件；
-- **CDN 内容由维护者手动同步**（清单与全部产物；同步方式不在本文档约定范围）；
+- **CI**（release.yml，tag 触发）产出产物与 `update-manifest.json` 作为 Release 附件，
+  并在 Release 创建后自动同步到 CDN（`scripts/sync_to_123pan.py`；未配置
+  `PAN123_CLIENT_ID`/`PAN123_CLIENT_SECRET` 时跳过，退回手动同步，见 §3.1）；
+- **CDN 同步语义**：`duplicate=2` 原地覆盖（fileID 与直链地址跨版本稳定），
+  产物先、稳定名清单最后，上传完成后回读 CDN 清单校验版本；
 - 服务端启动即拉取清单并落盘缓存（`./data/update-cache.json`，与审计日志同目录、同 UID 10001
   权限模型），此后按 `SC_UPDATE_REFRESH_H`（默认 24h）刷新；CDN 不可达时继续用缓存，只记日志；
 - 被控端检查有四条触发路径（同一套下载校验代码）：启动后 15s 首查 → 每 6h 定时 → 服务端 ws 推送
@@ -58,7 +61,7 @@
 
 ## 3. CDN 目录约定与地址
 
-对象存储根目录 `/www/ScriptCue-update/`，直链域名前缀 `https://cdn.kadaiad.fun`，
+直链空间目录 `/www/ScriptCue-update/`，直链域名前缀 `https://cdn.kadaiad.fun`，
 即每个文件 `https://cdn.kadaiad.fun/www/ScriptCue-update/<文件名>`：
 
 | 文件 | 说明 |
@@ -67,6 +70,40 @@
 | `ScriptCueAgent-windows-x64.exe` | Windows x64 单文件 |
 | `ScriptCueAgent-macos-arm64-update.tar.gz` | macOS Apple Silicon 更新包 |
 | `ScriptCueAgent-macos-x86_64-update.tar.gz` | macOS Intel 更新包 |
+
+### 3.1 CDN 自动同步（123云盘开放平台）
+
+`release` job 在创建 GitHub Release 后执行 `scripts/sync_to_123pan.py`（仅 tag 触发；
+`PAN123_CLIENT_ID` / `PAN123_CLIENT_SECRET` 未配置时该步骤自动跳过）。**推送 `v*` tag
+即等同对外发布**：同步成功后，在线被控端数分钟内即可感知新版本（见 §5）。要点：
+
+- 凭据来自 123云盘开放平台「开发者权益包」（网盘站内信获取），以 GitHub Secrets 存储；
+  access_token 有效期 30 天、每次发版现取（同一 client_id 最多 3 个 token 并存；若提示
+  token 数量超限或触发频控，脚本会给出针对性提示，可稍后重试或到开放平台侧处理）；
+- 目标目录按名称搜索「ScriptCue-update」定位 fileID；需要钉住时在仓库
+  Settings → Secrets and variables → **Variables** 配置 `PAN123_PARENT_FILE_ID`
+  （另有 `SC_CDN_BASE_URL` 可覆盖回读校验地址），工作流会透传给脚本；
+- 上传走单步上传（单文件 ≤1GB）+ `duplicate=2` **原地覆盖**：fileID 不变、直链地址不变、
+  不产生回收站残留（2026-10 POC 实测）；
+- 顺序：先上传清单引用的全部产物（上传前逐个比对 size/sha256 与清单一致），最后覆盖
+  `update-manifest.json`——避免清单指向从未上传过的文件名。注意：产物是**同名原地
+  覆盖**，产物换新与清单覆盖之间存在短暂窗口，期间旧清单的 sha256 会与 CDN 实际内容
+  暂时不一致；被控端自带 sha256 双取重试，**属预期现象**（见 §8 排障表）；
+- 上传后 best-effort 调直链缓存刷新（实测覆盖即生效，刷新仅作保险），最后回读 CDN 清单
+  比对 `version` 与 `released_at` 并抽查最小产物直链大小，任一项不一致则流水线失败（红灯；
+  回读最多重试约 105 秒，以覆盖 CDN 边缘缓存的滞后）；
+- 失败处置：重跑失败的 release job（覆盖上传与 Release 更新均为幂等）；或手工兜底——
+  从对应 GitHub Release 下载产物、核对 sha256 后按 §3 文件名覆盖上传到直链空间。
+
+#### 3.1.1 撤回 / 回退到上一版本
+
+自动同步后如需撤回某次发布（例如新版本有功能性缺陷），按“覆盖回上一版”处理：
+
+1. 从目标上一版本对应的 GitHub Release 下载 3 个产物与 `update-manifest.json`；
+2. 按 §3 的文件名覆盖上传到直链空间：网页端拖拽覆盖，或本地设置 `PAN123_CLIENT_ID` /
+   `PAN123_CLIENT_SECRET` 后执行 `python3 scripts/sync_to_123pan.py --dist <旧产物目录>`；
+3. 服务端在下个刷新周期（或重启）后对外恢复旧版本；已升级的机器可通过被控端 GUI
+   「回退上一版本」按钮回到本机 `.old`（见 §7）。
 
 ## 4. 服务端环境变量
 
@@ -83,16 +120,19 @@
 
 ## 5. 发版检查表
 
+> **推送 `v*` tag 即等同对外发布**：release job 成功后清单与产物数分钟内同步到 CDN，
+> 在线被控端将自动感知新版本。发版前务必完成自测（机制见 §3.1）。
+
 1. 确认「上一版本已有自动更新能力」——首个带自动更新能力的 v1.1.0 需要用户手动安装一次，
    之后（v1.1.0 → v1.1.1+）才能走应用内通道；
 2. **先部署服务端**（`docker compose pull && docker compose up -d`，确认 `/healthz` 的
    `proto=2`），**再发布被控端**（推送 `v*` tag 触发 Release 构建）——顺序颠倒时新被控端
    会被旧服务端以 `bad_proto` 拒绝；
-3. 从 GitHub Release 下载产物，核对 sha256（Release 页面自动显示各附件摘要，或对照清单中的 sha256）；
-4. 将清单与各平台产物同步到 CDN `/www/ScriptCue-update/`（覆盖稳定名清单）；
-5. 服务端最迟在下一个刷新周期（或重启）后生效；急需立即生效可重启服务端容器，或直接
+3. CDN 同步由流水线自动完成（产物先、稳定名清单最后，结束前回读校验清单与产物一致，见 §3.1）；
+   该步骤失败时重跑 release job（幂等），或按 §3.1 手工兜底（从 Release 下载产物核对 sha256）；
+4. 服务端最迟在下一个刷新周期（或重启）后生效；急需立即生效可重启服务端容器，或直接
    GET 一下 `/update/manifest.json` 前后的版本号确认；
-6. 抽查一台旧版被控端：15 秒内应显示"发现新版本"，主控端设备卡片出现"有可用更新"徽标。
+5. 抽查一台旧版被控端：15 秒内应显示"发现新版本"，主控端设备卡片出现"有可用更新"徽标。
 
 ## 6. 被控端流程与安全边界
 
@@ -170,6 +210,7 @@ macOS 替换/回退的残留清理：替换脚本的新版上位失败分支会�
 | `等待演出空闲后下载` | 处于安全窗口外，已等待 | 取消就绪/断开连接后会自动继续 |
 | `更新包下载完成` | 下载且双取校验通过 | 正常 |
 | `sha256 校验失败` / `下载期间发布方更新了清单` | 校验不一致，自动重下 | 连续 3 轮失败要检查 CDN 上的清单与产物是否同批 |
+| `sha256 校验失败`（发版后几分钟内） | CDN 自动同步的覆盖窗口：产物已换新、清单尚未覆盖 | 被控端会自动重试；持续超过约 5 分钟才需按上一行排查 |
 | `更新包预检未通过` | 待装产物 selftest 失败 | 保留现有版本；回查 CI 构建产物 |
 | `签名身份不一致` | macOS 签名身份变了 | 换证书会导致辅助功能授权失效，需一并重新授权 |
 | `已替换程序文件` | Windows 替换成功，即将重启 | 正常 |

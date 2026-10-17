@@ -1,7 +1,8 @@
 # 发版打包流水线：
 # - 推送 v* 标签 → 三平台打包并创建 GitHub Release（附产物与 update-manifest.json）
 # - 手动触发（workflow_dispatch）→ 仅执行打包，产物在 Actions 运行页下载（用于验证打包）
-# 清单与产物的 CDN 同步由维护者手动完成，见 docs/auto-update.md。
+# 清单与产物的 CDN 同步在 tag 发布时自动完成（release job 末步，scripts/sync_to_123pan.py；
+# PAN123_CLIENT_ID/PAN123_CLIENT_SECRET 未配置时跳过）；细节与手动兜底见 docs/auto-update.md。
 name: Release
 
 on:
@@ -224,3 +225,22 @@ jobs:
         with:
           files: dist/*
           generate_release_notes: true
+
+      # CDN 自动同步（123云盘开放平台）：产物先、稳定名清单最后覆盖到直链空间，
+      # 含“产物与清单同批”校验、直链缓存刷新（best-effort）与回读校验（版本+产物大小）；
+      # 逻辑见 scripts/sync_to_123pan.py。未配置 Secrets 时自动跳过（退回手动同步，
+      # 见 docs/auto-update.md §3.1）；失败处置：重跑本 job 即可（覆盖上传幂等）。
+      - name: 同步到 CDN（123云盘直链空间）
+        env:
+          PAN123_CLIENT_ID: ${{ secrets.PAN123_CLIENT_ID }}
+          PAN123_CLIENT_SECRET: ${{ secrets.PAN123_CLIENT_SECRET }}
+          # 可选：Repository variables（Settings → Secrets and variables → Variables）
+          # 留空时脚本按名称搜索目录 / 使用默认直链地址
+          PAN123_PARENT_FILE_ID: ${{ vars.PAN123_PARENT_FILE_ID }}
+          SC_CDN_BASE_URL: ${{ vars.SC_CDN_BASE_URL }}
+        run: |
+          if [ -z "$PAN123_CLIENT_ID" ] || [ -z "$PAN123_CLIENT_SECRET" ]; then
+            echo "::warning::未配置 PAN123_CLIENT_ID / PAN123_CLIENT_SECRET，已跳过 CDN 自动同步（可手动兜底，见 docs/auto-update.md）"
+            exit 0
+          fi
+          python3 scripts/sync_to_123pan.py --dist dist --expect-version "${GITHUB_REF_NAME#v}"

@@ -1,6 +1,6 @@
-"""更新清单源：从 CDN 对象存储拉取 update-manifest.json，缓存后供下发。
+"""更新清单源：从 CDN 直链空间拉取 update-manifest.json，缓存后供下发。
 
-数据流：CDN（维护者手动同步）→ 本模块（启动即刷 + 定时刷新 + 落盘缓存）
+数据流：CDN（release 流水线经 123云盘 OpenAPI 自动同步）→ 本模块（启动即刷 + 定时刷新 + 落盘缓存）
 → 被控端（GET /update/manifest.json 轮询，或经 ws 收到 update.available 推送）。
 
 设计约束：
